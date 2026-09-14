@@ -23,25 +23,34 @@
   .setup-screen input{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13.5px; margin:14px 0;}
   .setup-screen .err{color:var(--red); font-size:12.5px; margin-top:8px; display:none;}
 
-  .topbar{padding:28px 32px 20px; border-bottom:1px solid var(--line); background:var(--panel);}
+  .topbar{padding:28px 32px 20px; border-bottom:1px solid var(--line); background:var(--panel); border-top:5px solid transparent; border-image:linear-gradient(90deg, var(--teal), var(--violet), var(--amber)) 1;}
   .topbar-row{display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:12px;}
   .topbar h1{font-size:26px; letter-spacing:-0.01em;}
   .topbar .sub{color:var(--ink-soft); font-size:13.5px; margin-top:4px; max-width:640px;}
-  .live-badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; color:var(--teal); background:var(--teal-bg); padding:4px 10px; border-radius:100px; margin-top:8px;}
+  .live-badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--teal); background:var(--teal-bg); padding:4px 10px; border-radius:100px; margin-top:8px; border:1px solid #BFE3D6;}
   .live-dot{width:6px; height:6px; border-radius:50%; background:var(--teal);}
   .topbar-btns{display:flex; gap:8px; align-items:center;}
-  .btn-log{padding:8px 16px; border:none; border-radius:8px; background:var(--violet); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px;}
-  .btn-log:hover{opacity:.9;}
-  .stat-strip{display:flex; gap:0; margin-top:18px; border:1px solid var(--line); border-radius:10px; overflow:hidden;}
-  .stat{flex:1; padding:12px 16px; border-right:1px solid var(--line);}
-  .stat:last-child{border-right:none;}
-  .stat .n{font-family:'Fraunces',serif; font-size:22px; font-weight:600;}
-  .stat .l{font-size:11.5px; color:var(--ink-soft); margin-top:2px;}
+  .btn-log{padding:9px 18px; border:none; border-radius:9px; background:linear-gradient(135deg, #6D5BC7, #8B5FBF); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px; box-shadow:0 3px 10px rgba(109,91,199,.35);}
+  .btn-log:hover{opacity:.92; box-shadow:0 4px 14px rgba(109,91,199,.45);}
+  .stat-strip{display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;}
+  .stat{flex:1; min-width:140px; padding:14px 16px; border-radius:10px; border:1px solid transparent;}
+  .stat.c-total{background:var(--slate-bg); border-color:#CBD0D6;}
+  .stat.c-achieved{background:var(--teal-bg); border-color:#BFE3D6;}
+  .stat.c-notachieved{background:var(--amber-bg); border-color:#F3DBB0;}
+  .stat.c-void{background:var(--red-bg); border-color:#F0C4C0;}
+  .stat.c-unresolved{background:var(--violet-bg); border-color:#D6CEEE;}
+  .stat .n{font-family:'Fraunces',serif; font-size:24px; font-weight:600;}
+  .stat.c-total .n{color:var(--ink);}
+  .stat.c-achieved .n{color:var(--teal);}
+  .stat.c-notachieved .n{color:var(--amber);}
+  .stat.c-void .n{color:var(--red);}
+  .stat.c-unresolved .n{color:var(--violet);}
+  .stat .l{font-size:11.5px; color:var(--ink-soft); margin-top:2px; font-weight:600;}
   .coverage-note{margin-top:10px; font-size:12px; color:var(--ink-soft); background:#FAF9F5; border:1px solid var(--line); border-radius:8px; padding:8px 12px; max-width:760px;}
 
   .tabs{display:flex; gap:4px; padding:14px 32px 0; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; align-items:center;}
   .tab{padding:9px 14px; font-size:13.5px; font-weight:500; color:var(--ink-soft); border-bottom:2px solid transparent; cursor:pointer; user-select:none;}
-  .tab.active{color:var(--ink); border-bottom-color:var(--ink);}
+  .tab.active{color:var(--violet); border-bottom-color:var(--violet); font-weight:700;}
   .tab .count{color:var(--ink-soft); font-weight:400;}
   .view-toggle{margin-left:auto; display:flex; gap:2px; background:var(--slate-bg); border-radius:8px; padding:3px; margin-bottom:8px;}
   .view-opt{padding:6px 12px; font-size:12.5px; font-weight:600; border-radius:6px; cursor:pointer; color:var(--ink-soft);}
@@ -326,9 +335,9 @@ function buildStatStrip(){
         notAchieved=STUDENTS.filter(s=>s.achieved===false).length, voidRisk=STUDENTS.filter(s=>s.is_void_risk).length,
         unresolved=STUDENTS.filter(s=>s.achieved===null).length;
   document.getElementById('statStrip').innerHTML = [
-    ['Total SGP students',total],['Goal achieved',achieved],['Not achieved',notAchieved],
-    ['Void risk',voidRisk],['Status unresolved',unresolved],
-  ].map(([l,n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+    ['Total SGP students',total,'c-total'],['Goal achieved',achieved,'c-achieved'],['Not achieved',notAchieved,'c-notachieved'],
+    ['Void risk',voidRisk,'c-void'],['Status unresolved',unresolved,'c-unresolved'],
+  ].map(([l,n,c]) => `<div class="stat ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('coverageNote').innerHTML =
     total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no clear achieved/not-achieved signal yet.` : '';
 }
@@ -490,6 +499,7 @@ function renderLogModal(){
     <h3>Log entry</h3>
     <div class="step-sub">Logging as <b>${who}</b> &middot; <span class="tiny-link" onclick="localStorage.removeItem('sgp_whoami'); renderLogModal();">switch</span></div>
 
+    ${logEntryType !== 'newstudent' ? `
     <div class="picked-student ${logPickedStudent ? 'open' : ''}" id="pickedStudentBox">
       <span id="pickedStudentName">${logPickedStudent ? logPickedStudent.name : ''}</span>
       <span class="x" onclick="logPickedStudent=null; renderLogModal();">&times; change</span>
@@ -498,13 +508,14 @@ function renderLogModal(){
       <label>Student</label>
       <input id="studentSearch" type="text" placeholder="Search student name…" oninput="filterStudentSuggest(this.value)">
       <div class="student-suggest" id="studentSuggest">${studentOptions}</div>
-    ` : ''}
+    ` : ''}` : ''}
 
     <label style="margin-top:6px;">Entry type</label>
     <div class="entry-type-row">
       <div class="entry-type-opt ${logEntryType==='comment'?'active':''}" onclick="setLogEntryType('comment')">Comment</div>
       <div class="entry-type-opt ${logEntryType==='attendance'?'active':''}" onclick="setLogEntryType('attendance')">Attendance</div>
       <div class="entry-type-opt ${logEntryType==='ptm'?'active':''}" onclick="setLogEntryType('ptm')">PTM</div>
+      <div class="entry-type-opt ${logEntryType==='newstudent'?'active':''}" onclick="setLogEntryType('newstudent')">New Student</div>
     </div>
 
     <div id="logFormFields">${renderLogFormFields()}</div>
@@ -559,6 +570,20 @@ function renderLogFormFields(){
       <label>Date</label><input type="date" id="f_ptmdate">
       <label>Notes</label><textarea id="f_notes" placeholder="What was discussed?"></textarea>`;
   }
+  if(logEntryType === 'newstudent'){
+    return `
+      <label>Student name *</label><input type="text" id="f_name" placeholder="Full name">
+      <label>Student email</label><input type="text" id="f_email" placeholder="student@example.com">
+      <label>Parent email</label><input type="text" id="f_parentemail" placeholder="parent@example.com">
+      <label>Phone</label><input type="text" id="f_phone" placeholder="+971...">
+      <label>Batch start date</label><input type="date" id="f_batchstart">
+      <label>Course type</label><select id="f_coursetype"><option>SGP</option><option>Non-SGP</option></select>
+      <label>Math trainer</label><input type="text" id="f_mathtrainer" placeholder="Trainer name">
+      <label>English trainer</label><input type="text" id="f_engtrainer" placeholder="Trainer name">
+      <label>SSM</label><input type="text" id="f_ssm" placeholder="SSM name">
+      <label>Target</label><input type="text" id="f_target" placeholder="e.g. 1500+ or 200 point">
+      <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">`;
+  }
   return '';
 }
 
@@ -585,7 +610,7 @@ async function postAction(payload){
 }
 
 async function submitLogEntry(){
-  if(!logPickedStudent){
+  if(logEntryType !== 'newstudent' && !logPickedStudent){
     document.getElementById('logSaveStatus').className = 'save-status fail';
     document.getElementById('logSaveStatus').textContent = 'Pick a student first.';
     return;
@@ -593,8 +618,22 @@ async function submitLogEntry(){
   const btn = document.getElementById('logSaveBtn');
   btn.disabled = true;
   try{
-    let payload = { student_id: logPickedStudent.id, student_name: logPickedStudent.name };
-    if(logEntryType === 'comment'){
+    let payload = logEntryType === 'newstudent' ? {} : { student_id: logPickedStudent.id, student_name: logPickedStudent.name };
+    if(logEntryType === 'newstudent'){
+      payload.action = 'add_student';
+      payload.name = document.getElementById('f_name').value.trim();
+      payload.email = document.getElementById('f_email').value.trim();
+      payload.parent_email = document.getElementById('f_parentemail').value.trim();
+      payload.phone = document.getElementById('f_phone').value.trim();
+      payload.batch_start_date = document.getElementById('f_batchstart').value;
+      payload.course_type = document.getElementById('f_coursetype').value;
+      payload.math_trainer = document.getElementById('f_mathtrainer').value.trim();
+      payload.english_trainer = document.getElementById('f_engtrainer').value.trim();
+      payload.ssm = document.getElementById('f_ssm').value.trim();
+      payload.target = document.getElementById('f_target').value.trim();
+      payload.total_hours = document.getElementById('f_hours').value;
+      if(!payload.name) throw new Error('Student name is required.');
+    } else if(logEntryType === 'comment'){
       payload.action = 'add_comment';
       payload.commenter_role = document.getElementById('f_role').value;
       payload.comment_text = document.getElementById('f_text').value.trim();
