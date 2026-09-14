@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SGP Consolidated Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1B2430; --ink-soft:#4B5563; --paper:#F6F4EF; --panel:#FFFFFF; --line:#DCD7CB;
+    --teal:#0F6E5E; --teal-bg:#E4F1EC; --amber:#9A5B10; --amber-bg:#FBF0DF;
+    --red:#A32C2C; --red-bg:#FAE7E5; --slate:#5B6472; --slate-bg:#EDEBE4;
+    --violet:#5B4B9E; --violet-bg:#ECE8F7;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:'Inter',system-ui,sans-serif; -webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Fraunces',serif; font-weight:600; margin:0;}
+
+  .setup-screen{max-width:640px; margin:80px auto; padding:36px; background:var(--panel); border:1px solid var(--line); border-radius:12px;}
+  .setup-screen h2{font-size:20px; margin-bottom:10px;}
+  .setup-screen p{font-size:13.5px; line-height:1.6; color:var(--ink-soft);}
+  .setup-screen input{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13.5px; margin:14px 0;}
+  .setup-screen .err{color:var(--red); font-size:12.5px; margin-top:8px; display:none;}
+
+  .topbar{padding:28px 32px 20px; border-bottom:1px solid var(--line); background:var(--panel);}
+  .topbar-row{display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:12px;}
+  .topbar h1{font-size:26px; letter-spacing:-0.01em;}
+  .topbar .sub{color:var(--ink-soft); font-size:13.5px; margin-top:4px; max-width:640px;}
+  .live-badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; color:var(--teal); background:var(--teal-bg); padding:4px 10px; border-radius:100px; margin-top:8px;}
+  .live-dot{width:6px; height:6px; border-radius:50%; background:var(--teal);}
+  .topbar-btns{display:flex; gap:8px; align-items:center;}
+  .btn-log{padding:8px 16px; border:none; border-radius:8px; background:var(--violet); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px;}
+  .btn-log:hover{opacity:.9;}
+  .stat-strip{display:flex; gap:0; margin-top:18px; border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  .stat{flex:1; padding:12px 16px; border-right:1px solid var(--line);}
+  .stat:last-child{border-right:none;}
+  .stat .n{font-family:'Fraunces',serif; font-size:22px; font-weight:600;}
+  .stat .l{font-size:11.5px; color:var(--ink-soft); margin-top:2px;}
+  .coverage-note{margin-top:10px; font-size:12px; color:var(--ink-soft); background:#FAF9F5; border:1px solid var(--line); border-radius:8px; padding:8px 12px; max-width:760px;}
+
+  .tabs{display:flex; gap:4px; padding:14px 32px 0; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; align-items:center;}
+  .tab{padding:9px 14px; font-size:13.5px; font-weight:500; color:var(--ink-soft); border-bottom:2px solid transparent; cursor:pointer; user-select:none;}
+  .tab.active{color:var(--ink); border-bottom-color:var(--ink);}
+  .tab .count{color:var(--ink-soft); font-weight:400;}
+  .view-toggle{margin-left:auto; display:flex; gap:2px; background:var(--slate-bg); border-radius:8px; padding:3px; margin-bottom:8px;}
+  .view-opt{padding:6px 12px; font-size:12.5px; font-weight:600; border-radius:6px; cursor:pointer; color:var(--ink-soft);}
+  .view-opt.active{background:var(--panel); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08);}
+
+  .toolbar{display:flex; gap:10px; align-items:center; padding:16px 32px; flex-wrap:wrap;}
+  .search{flex:1; min-width:220px; max-width:320px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13.5px; background:var(--panel);}
+  .search:focus{outline:none; border-color:var(--ink-soft);}
+  select{padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13px; background:var(--panel); color:var(--ink);}
+  .toolbar .meta{margin-left:auto; font-size:12.5px; color:var(--ink-soft);}
+  .btn{padding:8px 14px; border:1px solid var(--ink); border-radius:8px; background:var(--ink); color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;}
+  .btn:hover{opacity:.88;}
+  .btn.ghost{background:var(--panel); color:var(--ink); border-color:var(--line);}
+  .btn.small{padding:6px 11px; font-size:12px;}
+  .btn:disabled{opacity:.5; cursor:not-allowed;}
+
+  table{width:calc(100% - 64px); margin:0 32px 40px; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  thead th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); font-weight:600; padding:10px 14px; border-bottom:1px solid var(--line); background:#FAF9F5;}
+  tbody td{padding:11px 14px; font-size:13.5px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr{cursor:pointer;}
+  tbody tr:hover{background:#FAF8F2;}
+  .name{font-weight:600;}
+  .sub2{color:var(--ink-soft); font-size:12px; margin-top:1px;}
+  .num{font-variant-numeric:tabular-nums;}
+
+  .pill{display:inline-block; padding:3px 9px; border-radius:100px; font-size:11.5px; font-weight:600; margin:1px 3px 1px 0;}
+  .pill.teal{background:var(--teal-bg); color:var(--teal);}
+  .pill.amber{background:var(--amber-bg); color:var(--amber);}
+  .pill.red{background:var(--red-bg); color:var(--red);}
+  .pill.slate{background:var(--slate-bg); color:var(--slate);}
+  .pill.violet{background:var(--violet-bg); color:var(--violet);}
+
+  .empty{padding:60px 32px; text-align:center; color:var(--ink-soft); font-size:14px;}
+  .loading{padding:80px 32px; text-align:center; color:var(--ink-soft); font-size:14px;}
+
+  .overlay{position:fixed; inset:0; background:rgba(27,36,48,0.35); display:none; align-items:flex-start; justify-content:flex-end; z-index:50;}
+  .overlay.open{display:flex;}
+  .panel{width:min(600px, 94vw); height:100%; background:var(--panel); box-shadow:-8px 0 30px rgba(0,0,0,.12); overflow-y:auto; padding:28px 28px 60px; position:relative;}
+  .panel-actions{position:absolute; top:20px; right:20px; display:flex; gap:8px;}
+  .icon-btn{width:30px; height:30px; border-radius:8px; border:1px solid var(--line); background:var(--panel); cursor:pointer; font-size:14px; color:var(--ink-soft); display:flex; align-items:center; justify-content:center;}
+  .icon-btn:hover{background:var(--slate-bg);}
+  .panel h2{font-size:22px; margin-bottom:2px; padding-right:90px;}
+  .panel .role-line{color:var(--ink-soft); font-size:13px; margin-bottom:18px;}
+  .field-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; margin-bottom:10px;}
+  .field .k{font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); margin-bottom:3px;}
+  .field .v{font-size:14px; font-weight:500;}
+  .section-title{font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); font-weight:600; margin:22px 0 10px; padding-top:16px; border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;}
+  .score-row{display:flex; gap:8px; flex-wrap:wrap;}
+  .score-chip{background:var(--slate-bg); border-radius:7px; padding:6px 10px; font-size:13px; font-variant-numeric:tabular-nums; font-weight:600; color:var(--ink);}
+  .comment-item{padding:9px 0; border-bottom:1px solid var(--line);}
+  .comment-item:last-child{border-bottom:none;}
+  .comment-item .role{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--violet); margin-bottom:2px;}
+  .comment-item .txt{font-size:13.3px; line-height:1.45;}
+  .comment-item .meta{font-size:10.5px; color:var(--ink-soft); margin-top:3px;}
+  .comment-list{max-height:280px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:4px 14px; background:#FAF9F5;}
+  .placeholder-box{border:1px dashed var(--line); border-radius:8px; padding:14px; font-size:12.5px; color:var(--ink-soft); background:#FAF9F5;}
+  .cycle-card{border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:10px; background:#FAF9F5;}
+  .cycle-card .hd{display:flex; justify-content:space-between; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;}
+  .cycle-card .row{font-size:13px; margin-bottom:3px;}
+
+  /* Log Entry modal */
+  .log-overlay{position:fixed; inset:0; background:rgba(27,36,48,0.45); display:none; align-items:center; justify-content:center; z-index:60;}
+  .log-overlay.open{display:flex;}
+  .log-modal{width:min(460px, 92vw); max-height:88vh; overflow-y:auto; background:var(--panel); border-radius:14px; padding:26px; box-shadow:0 20px 50px rgba(0,0,0,.25);}
+  .log-modal h3{font-size:18px; margin-bottom:4px;}
+  .log-modal .step-sub{font-size:12.5px; color:var(--ink-soft); margin-bottom:16px;}
+  .log-modal input, .log-modal select, .log-modal textarea{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px;
+    font-family:inherit; font-size:13.5px; margin-bottom:10px; background:var(--panel);
+  }
+  .log-modal textarea{min-height:70px; resize:vertical;}
+  .log-modal label{font-size:11.5px; font-weight:600; color:var(--ink-soft); display:block; margin-bottom:4px;}
+  .entry-type-row{display:flex; gap:6px; margin-bottom:14px;}
+  .entry-type-opt{flex:1; padding:9px 6px; border:1px solid var(--line); border-radius:8px; text-align:center; font-size:12px; font-weight:600; cursor:pointer; color:var(--ink-soft);}
+  .entry-type-opt.active{background:var(--violet-bg); color:var(--violet); border-color:var(--violet);}
+  .log-modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:6px;}
+  .save-status{font-size:12px; margin-top:8px; display:none;}
+  .save-status.ok{color:var(--teal); display:block;}
+  .save-status.fail{color:var(--red); display:block;}
+  .tiny-link{font-size:12px; color:var(--ink-soft); text-decoration:underline; cursor:pointer;}
+  .student-suggest{border:1px solid var(--line); border-radius:8px; max-height:160px; overflow-y:auto; margin-top:-6px; margin-bottom:10px; display:none;}
+  .student-suggest.open{display:block;}
+  .student-suggest div{padding:8px 11px; font-size:13px; cursor:pointer;}
+  .student-suggest div:hover{background:var(--slate-bg);}
+  .picked-student{background:var(--teal-bg); color:var(--teal); padding:8px 11px; border-radius:8px; font-size:13px; font-weight:600; margin-bottom:10px; display:none; align-items:center; justify-content:space-between;}
+  .picked-student.open{display:flex;}
+  .picked-student span.x{cursor:pointer; font-weight:400;}
+
+  @media print{ .tabs, .toolbar, .topbar-btns{display:none;} body{background:#fff;} }
+</style>
+</head>
+<body>
+
+<div id="setupScreen" class="setup-screen">
+  <h2>Connect to your live SGP Tracker</h2>
+  <p>Paste the Apps Script Web App URL (ends in <code>/exec</code>) from your Google Sheet's deployment. Saved in your browser only.</p>
+  <input id="apiUrlInput" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+  <button class="btn" onclick="saveApiUrl()">Connect</button>
+  <div class="err" id="setupErr">Couldn't reach that URL — check it's deployed with "Anyone" access and try again.</div>
+</div>
+
+<div id="app" style="display:none;">
+
+<div class="topbar">
+  <div class="topbar-row">
+    <div>
+      <h1>SGP Consolidated Tracker</h1>
+      <div class="sub">Every SGP student in one place — live from your Google Sheet.</div>
+      <div class="live-badge"><span class="live-dot"></span><span id="lastSync">Live</span></div>
+    </div>
+    <div class="topbar-btns">
+      <button class="btn ghost" onclick="refreshData()" title="Refresh">↻</button>
+      <button class="btn ghost" onclick="downloadBackup()">Download backup</button>
+      <button class="btn ghost" onclick="window.print()">Export PDF</button>
+      <button class="btn-log" onclick="openLogModal()">+ Log Entry</button>
+    </div>
+  </div>
+  <div class="stat-strip" id="statStrip"></div>
+  <div class="coverage-note" id="coverageNote"></div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div style="padding:0 32px;">
+  <div class="view-toggle" id="viewToggle">
+    <div class="view-opt active" data-mode="overview">Overview</div>
+    <div class="view-opt" data-mode="detail">Detail</div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input class="search" id="searchBox" type="text" placeholder="Search student, trainer, SSM, email…">
+  <select id="trainerFilter"><option value="">All trainers</option></select>
+  <div class="meta" id="resultMeta"></div>
+</div>
+
+<div id="loadingState" class="loading">Loading live data from your sheet…</div>
+<table id="tableRoot" style="display:none;">
+  <thead id="tableHead"></thead>
+  <tbody id="tableBody"></tbody>
+</table>
+<div class="empty" id="emptyState" style="display:none;">No students match this view.</div>
+
+<div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
+
+</div>
+
+<!-- LOG ENTRY MODAL -->
+<div class="log-overlay" id="logOverlay">
+  <div class="log-modal" id="logModal"></div>
+</div>
+
+<script>
+let RAW = null;
+let STUDENTS = [];
+let activeTab = 'all';
+let viewMode = 'overview';
+let searchTerm = '';
+let trainerFilter = '';
+let logPickedStudent = null;
+let logEntryType = 'comment';
+
+const TABS = [
+  { key: 'all', label: 'All students', filter: s => true },
+  { key: 'achieved', label: 'Goal achieved', filter: s => s.achieved === true },
+  { key: 'not_achieved', label: 'Not achieved / at risk', filter: s => s.achieved === false },
+  { key: 'void_risk', label: 'Void risk', filter: s => s.is_void_risk },
+  { key: 'unresolved', label: 'Status unresolved', filter: s => s.achieved === null },
+];
+
+// ---------- API URL ----------
+function getApiUrl(){ return localStorage.getItem('sgp_api_url') || ''; }
+function saveApiUrl(){
+  const val = document.getElementById('apiUrlInput').value.trim();
+  if(!val) return;
+  localStorage.setItem('sgp_api_url', val);
+  boot();
+}
+function getWhoAmI(){ return localStorage.getItem('sgp_whoami') || ''; }
+
+// ---------- BOOT — straight into the overview, no gate ----------
+async function boot(){
+  const url = getApiUrl();
+  if(!url){ document.getElementById('setupScreen').style.display = 'block'; return; }
+  document.getElementById('setupScreen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  await refreshData();
+}
+
+async function refreshData(){
+  const url = getApiUrl();
+  document.getElementById('loadingState').style.display = 'block';
+  document.getElementById('tableRoot').style.display = 'none';
+  try{
+    const res = await fetch(url);
+    const json = await res.json();
+    if(json.error) throw new Error(json.error);
+    RAW = json;
+    STUDENTS = buildStudentView(RAW);
+    document.getElementById('lastSync').textContent = 'Live — synced ' + new Date().toLocaleTimeString();
+    buildStatStrip(); buildTrainerOptions(); render();
+  } catch(err){
+    document.getElementById('loadingState').innerHTML =
+      'Could not load data: ' + err.message + '<br><br><button class="btn ghost" onclick="refreshData()">Retry</button>';
+    return;
+  }
+  document.getElementById('loadingState').style.display = 'none';
+}
+
+// ---------- JOIN RAW TABS INTO PER-STUDENT VIEW MODEL ----------
+function buildStudentView(raw){
+  const byId = {};
+  (raw.Students || []).forEach(s => { byId[s.student_id] = Object.assign({}, s); });
+
+  Object.values(byId).forEach(s => {
+    s.math_trainer=''; s.english_trainer=''; s.secondary_math_trainer=''; s.secondary_english_trainer='';
+    s.test_scores=[]; s.weekly_comments=[]; s.reattempt_cycles=[]; s.milestone_status='';
+    s.root_cause_tags=[]; s.is_void_risk = s.is_void === 'TRUE' || s.is_void === true;
+    s.attendance_log=[]; s.ptm_log=[]; s.referral_log=[]; s.scorecard_log=[];
+  });
+
+  (raw.Trainer_History || []).forEach(t => {
+    const s = byId[t.student_id]; if(!s) return;
+    if(t.subject==='Math' && t.role==='Primary') s.math_trainer=t.trainer_name;
+    if(t.subject==='English' && t.role==='Primary') s.english_trainer=t.trainer_name;
+    if(t.subject==='Math' && t.role==='Secondary') s.secondary_math_trainer=t.trainer_name;
+    if(t.subject==='English' && t.role==='Secondary') s.secondary_english_trainer=t.trainer_name;
+  });
+
+  const attemptByStudent = {};
+  (raw.Attempts || []).forEach(a => {
+    const s = byId[a.student_id]; if(!s) return;
+    attemptByStudent[a.student_id] = a;
+    s.attempt_id = a.attempt_id;
+    s.attempt_type=a.attempt_type; s.test_month=a.test_month; s.target=a.target;
+    s.diag_score=a.diagnostic_score; s.diag_math=a.diagnostic_math; s.diag_english=a.diagnostic_english;
+    s.latest_score=a.attempt_score;
+    s.achieved = a.achieved==='TRUE' ? true : (a.achieved==='FALSE' ? false : null);
+    s.achieved_source = a.achieved_source;
+  });
+
+  (raw.Test_Scores || []).forEach(t => { const s=byId[t.student_id]; if(s) s.test_scores.push(Number(t.total_score)); });
+  (raw.Milestones || []).forEach(m => { const s=byId[m.student_id]; if(s) s.milestone_status=m.milestone_status; });
+  (raw.Weekly_Comments || []).forEach(c => { const s=byId[c.student_id]; if(s) s.weekly_comments.push(c); });
+  (raw.Reattempt_Cycles || []).forEach(c => { const s=byId[c.student_id]; if(s) s.reattempt_cycles.push(c); });
+  (raw.Class_Attendance || []).forEach(c => { const s=byId[c.student_id]; if(s) s.attendance_log.push(c); });
+  (raw.PTM_Log || []).forEach(c => { const s=byId[c.student_id]; if(s) s.ptm_log.push(c); });
+  (raw.Referral_Log || []).forEach(c => { const s=byId[c.student_id]; if(s) s.referral_log.push(c); });
+  (raw.Scorecards || []).forEach(c => { const s=byId[c.student_id]; if(s) s.scorecard_log.push(c); });
+
+  (raw.Root_Cause_Analysis || []).forEach(r => {
+    const s = Object.values(byId).find(x => attemptByStudent[x.student_id] && attemptByStudent[x.student_id].attempt_id === r.attempt_id);
+    if(s) s.root_cause_tags.push(r.category);
+  });
+
+  return Object.values(byId);
+}
+
+function statusPill(s){
+  if(s.is_void_risk) return '<span class="pill red">Void risk</span>';
+  if(s.achieved === true) return '<span class="pill teal">Achieved</span>';
+  if(s.achieved === false) return '<span class="pill amber">Not achieved</span>';
+  return '<span class="pill slate">Unresolved</span>';
+}
+function rootCauseTags(s){
+  if(!s.root_cause_tags || !s.root_cause_tags.length) return s.achieved === false ? '<span class="pill slate">Unclassified</span>' : '';
+  return s.root_cause_tags.map(t => `<span class="pill violet">${t}</span>`).join('');
+}
+function fmtScore(v){ if(v===null||v===undefined||v===''||isNaN(v)) return '—'; return Math.round(v); }
+
+function buildTabs(){
+  const el = document.getElementById('tabs');
+  el.innerHTML = TABS.map(t => {
+    const n = STUDENTS.filter(t.filter).length;
+    return `<div class="tab ${t.key===activeTab?'active':''}" data-key="${t.key}">${t.label} <span class="count">(${n})</span></div>`;
+  }).join('');
+  [...el.querySelectorAll('.tab')].forEach(node => node.addEventListener('click', () => { activeTab=node.dataset.key; render(); }));
+}
+
+function buildStatStrip(){
+  const total=STUDENTS.length, achieved=STUDENTS.filter(s=>s.achieved===true).length,
+        notAchieved=STUDENTS.filter(s=>s.achieved===false).length, voidRisk=STUDENTS.filter(s=>s.is_void_risk).length,
+        unresolved=STUDENTS.filter(s=>s.achieved===null).length;
+  document.getElementById('statStrip').innerHTML = [
+    ['Total SGP students',total],['Goal achieved',achieved],['Not achieved',notAchieved],
+    ['Void risk',voidRisk],['Status unresolved',unresolved],
+  ].map(([l,n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  document.getElementById('coverageNote').innerHTML =
+    total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no clear achieved/not-achieved signal yet.` : '';
+}
+
+function buildTrainerOptions(){
+  const set = new Set();
+  STUDENTS.forEach(s => { if(s.math_trainer) set.add(s.math_trainer); if(s.english_trainer) set.add(s.english_trainer); });
+  const sel = document.getElementById('trainerFilter');
+  sel.innerHTML = '<option value="">All trainers</option>';
+  [...set].sort().forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
+  sel.onchange = () => { trainerFilter = sel.value; render(); };
+}
+
+function currentList(){
+  const tab = TABS.find(t => t.key === activeTab);
+  let list = STUDENTS.filter(tab.filter);
+  if(trainerFilter) list = list.filter(s => s.math_trainer===trainerFilter || s.english_trainer===trainerFilter);
+  if(searchTerm){
+    const q = searchTerm.toLowerCase();
+    list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.math_trainer||'').toLowerCase().includes(q) ||
+      (s.english_trainer||'').toLowerCase().includes(q) || (s.ssm||'').toLowerCase().includes(q) || (s.email||'').toLowerCase().includes(q));
+  }
+  return list;
+}
+
+function renderHead(){
+  document.getElementById('tableHead').innerHTML = viewMode==='overview'
+    ? `<tr><th>Student</th><th>Trainers</th><th>Attempt status</th><th>Milestone</th><th>Root cause</th></tr>`
+    : `<tr><th>Student</th><th>Trainers</th><th>Attempt</th><th>Target</th><th>Latest score</th><th>Status</th><th>Milestone</th></tr>`;
+}
+function renderRow(s){
+  if(viewMode==='overview'){
+    return `<tr data-id="${s.student_id}">
+      <td><div class="name">${s.name}</div><div class="sub2">${s.email||''}</div></td>
+      <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
+      <td>${statusPill(s)}</td>
+      <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td>
+      <td>${rootCauseTags(s)}</td></tr>`;
+  }
+  return `<tr data-id="${s.student_id}">
+    <td><div class="name">${s.name}</div><div class="sub2">${s.email||''}</div></td>
+    <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
+    <td>${s.attempt_type||'—'}${s.test_month?'<div class="sub2">'+s.test_month+'</div>':''}</td>
+    <td class="num">${s.target||'—'}</td>
+    <td class="num">${fmtScore(s.latest_score)}${s.diag_score?'<div class="sub2">diag '+fmtScore(s.diag_score)+'</div>':''}</td>
+    <td>${statusPill(s)}</td>
+    <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td></tr>`;
+}
+
+function render(){
+  buildTabs(); renderHead();
+  const list = currentList();
+  const body=document.getElementById('tableBody'), table=document.getElementById('tableRoot'), empty=document.getElementById('emptyState');
+  document.getElementById('resultMeta').textContent = `${list.length} student${list.length===1?'':'s'}`;
+  if(list.length===0){ table.style.display='none'; empty.style.display='block'; return; }
+  table.style.display='table'; empty.style.display='none';
+  body.innerHTML = list.map(renderRow).join('');
+  [...body.querySelectorAll('tr')].forEach(row => row.addEventListener('click', () => openPanel(STUDENTS.find(s=>s.student_id===row.dataset.id))));
+}
+
+// ---------- STUDENT DETAIL PANEL (read-only, viewing only) ----------
+function openPanel(s){
+  const scores = (s.test_scores||[]).map(v => `<span class="score-chip">${Math.round(v)}</span>`).join('');
+  const commentsHtml = (s.weekly_comments||[]).map(c => `<div class="comment-item"><div class="role">${c.commenter_role}</div><div class="txt">${c.comment_text}</div>${c.entered_by?'<div class="meta">— '+c.entered_by+'</div>':''}</div>`).join('');
+  const cyclesHtml = (s.reattempt_cycles||[]).map(c => `<div class="cycle-card">
+      <div class="hd"><span>${c.source_tracker} tracker &middot; ${c.test_month||'—'} → ${c.reattempt_month||'—'}</span></div>
+      <div class="row"><b>Trainers:</b> ${c.math_teacher||'—'} / ${c.english_teacher||'—'}</div>
+      <div class="row"><b>DS → AS:</b> ${c.diagnostic_score||'—'} → ${c.attempt_score||'—'}</div>
+      ${c.comments?'<div class="row">'+c.comments+'</div>':''}</div>`).join('');
+  const attendanceHtml = (s.attendance_log||[]).slice().reverse().map(a =>
+    `<div class="comment-item"><div class="txt">${a.class_date} &middot; ${a.subject} &middot; <b>${a.status}</b>${a.cancellation_reason?' — '+a.cancellation_reason:''}</div><div class="meta">— ${a.entered_by||''}</div></div>`).join('');
+  const ptmHtml = (s.ptm_log||[]).slice().reverse().map(p =>
+    `<div class="comment-item"><div class="txt">${p.ptm_date} — ${p.notes||'(no notes)'}</div><div class="meta">— ${p.conducted_by||p.entered_by||''}, next due ${p.next_due_date||''}</div></div>`).join('');
+
+  document.getElementById('panel').innerHTML = `
+    <div class="panel-actions">
+      <div class="icon-btn" onclick="window.print()">&#128438;</div>
+      <div class="icon-btn" onclick="closePanel(); openLogModal('${s.student_id}','${s.name.replace(/'/g,"\\'")}')" title="Log entry for this student">+</div>
+      <div class="icon-btn" onclick="closePanel()">&times;</div>
+    </div>
+    <h2>${s.name}</h2>
+    <div class="role-line">${s.math_trainer||'—'} (Math) &middot; ${s.english_trainer||'—'} (English) &middot; SSM: ${s.ssm||'—'}</div>
+    <div class="field-grid">
+      <div class="field"><div class="k">Status</div><div class="v">${statusPill(s)}</div></div>
+      <div class="field"><div class="k">Attempt type</div><div class="v">${s.attempt_type||'—'}</div></div>
+      <div class="field"><div class="k">Target</div><div class="v">${s.target||'—'}</div></div>
+      <div class="field"><div class="k">Diagnostic (M/E)</div><div class="v">${s.diag_math||'—'} / ${s.diag_english||'—'}</div></div>
+      <div class="field"><div class="k">Latest score</div><div class="v">${fmtScore(s.latest_score)}</div></div>
+      <div class="field"><div class="k">Milestone</div><div class="v">${s.milestone_status||'—'}</div></div>
+    </div>
+
+    <div class="section-title">Root cause</div>
+    ${s.real_root_cause_notes ? `<div class="placeholder-box" style="border-style:solid; border-color:var(--teal); background:var(--teal-bg); color:var(--ink);">
+      <b>Human-verified (SSM/PL):</b> ${s.real_root_cause_status ? s.real_root_cause_status + ' — ' : ''}${s.real_root_cause_notes}
+    </div>` : ''}
+    <div style="margin-top:6px;">${rootCauseTags(s) || (s.real_root_cause_notes ? '' : '<span class="sub2">Not applicable.</span>')}</div>
+
+    <div class="section-title">Test score history</div>
+    <div class="score-row">${scores || '<span class="sub2">No test scores yet.</span>'}</div>
+
+    <div class="section-title">Reattempt cycles <span class="sub2">${(s.reattempt_cycles||[]).length} logged</span></div>
+    ${(s.reattempt_cycles||[]).length ? cyclesHtml : '<div class="placeholder-box">None logged.</div>'}
+
+    <div class="section-title">Weekly comments <span class="sub2">${(s.weekly_comments||[]).length} logged</span></div>
+    ${commentsHtml ? `<div class="comment-list">${commentsHtml}</div>` : '<div class="placeholder-box">None yet.</div>'}
+
+    <div class="section-title">Class attendance <span class="sub2">${(s.attendance_log||[]).length} logged</span></div>
+    ${attendanceHtml ? `<div class="comment-list">${attendanceHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+
+    <div class="section-title">PTM log <span class="sub2">${(s.ptm_log||[]).length} logged</span></div>
+    ${ptmHtml ? `<div class="comment-list">${ptmHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+  `;
+  document.getElementById('overlay').classList.add('open');
+}
+function closePanel(){ document.getElementById('overlay').classList.remove('open'); }
+document.getElementById('overlay').addEventListener('click', e => { if(e.target.id==='overlay') closePanel(); });
+document.getElementById('searchBox').addEventListener('input', e => { searchTerm=e.target.value; render(); });
+[...document.querySelectorAll('.view-opt')].forEach(el => el.addEventListener('click', () => {
+  viewMode = el.dataset.mode;
+  document.querySelectorAll('.view-opt').forEach(x=>x.classList.remove('active'));
+  el.classList.add('active'); render();
+}));
+
+// ---------- LOG ENTRY MODAL — the only place identity/writing happens ----------
+function openLogModal(preStudentId, preStudentName){
+  logPickedStudent = preStudentId ? { id: preStudentId, name: preStudentName } : null;
+  logEntryType = 'comment';
+  renderLogModal();
+  document.getElementById('logOverlay').classList.add('open');
+}
+function closeLogModal(){ document.getElementById('logOverlay').classList.remove('open'); }
+document.getElementById('logOverlay').addEventListener('click', e => { if(e.target.id==='logOverlay') closeLogModal(); });
+
+function renderLogModal(){
+  const who = getWhoAmI();
+  const modal = document.getElementById('logModal');
+
+  if(!who){
+    const teamList = (RAW && RAW.Team_Directory || []);
+    modal.innerHTML = `
+      <h3>Who are you?</h3>
+      <div class="step-sub">So this entry is correctly attributed. Not a password — just remembered on this device.</div>
+      <label>Pick your name</label>
+      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${t.role})</option>`).join('')}</select>
+      <div class="tiny-link" onclick="document.getElementById('whoEmailWrap').style.display='block'">Not on the list? Type your email instead</div>
+      <div id="whoEmailWrap" style="display:none; margin-top:8px;">
+        <input id="whoEmail" type="text" placeholder="you@leapscholar.com">
+      </div>
+      <div class="log-modal-actions">
+        <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
+        <button class="btn small" onclick="confirmWhoAmI()">Continue</button>
+      </div>`;
+    return;
+  }
+
+  const studentOptions = STUDENTS.map(s => `<div data-id="${s.student_id}" data-name="${s.name}">${s.name}</div>`).join('');
+
+  modal.innerHTML = `
+    <h3>Log entry</h3>
+    <div class="step-sub">Logging as <b>${who}</b> &middot; <span class="tiny-link" onclick="localStorage.removeItem('sgp_whoami'); renderLogModal();">switch</span></div>
+
+    <div class="picked-student ${logPickedStudent ? 'open' : ''}" id="pickedStudentBox">
+      <span id="pickedStudentName">${logPickedStudent ? logPickedStudent.name : ''}</span>
+      <span class="x" onclick="logPickedStudent=null; renderLogModal();">&times; change</span>
+    </div>
+    ${!logPickedStudent ? `
+      <label>Student</label>
+      <input id="studentSearch" type="text" placeholder="Search student name…" oninput="filterStudentSuggest(this.value)">
+      <div class="student-suggest" id="studentSuggest">${studentOptions}</div>
+    ` : ''}
+
+    <label style="margin-top:6px;">Entry type</label>
+    <div class="entry-type-row">
+      <div class="entry-type-opt ${logEntryType==='comment'?'active':''}" onclick="setLogEntryType('comment')">Comment</div>
+      <div class="entry-type-opt ${logEntryType==='attendance'?'active':''}" onclick="setLogEntryType('attendance')">Attendance</div>
+      <div class="entry-type-opt ${logEntryType==='ptm'?'active':''}" onclick="setLogEntryType('ptm')">PTM</div>
+    </div>
+
+    <div id="logFormFields">${renderLogFormFields()}</div>
+
+    <div class="log-modal-actions">
+      <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
+      <button class="btn small" id="logSaveBtn" onclick="submitLogEntry()">Save</button>
+    </div>
+    <div class="save-status" id="logSaveStatus"></div>
+  `;
+
+  if(!logPickedStudent){
+    document.getElementById('studentSuggest').querySelectorAll('div').forEach(d => {
+      d.addEventListener('click', () => {
+        logPickedStudent = { id: d.dataset.id, name: d.dataset.name };
+        renderLogModal();
+      });
+    });
+  }
+}
+
+function filterStudentSuggest(q){
+  const box = document.getElementById('studentSuggest');
+  box.classList.toggle('open', q.length > 0);
+  [...box.children].forEach(d => {
+    d.style.display = d.dataset.name.toLowerCase().includes(q.toLowerCase()) ? 'block' : 'none';
+  });
+}
+
+function setLogEntryType(t){
+  logEntryType = t;
+  renderLogModal();
+}
+
+function renderLogFormFields(){
+  if(logEntryType === 'comment'){
+    return `
+      <label>Role</label>
+      <select id="f_role"><option>Math Trainer</option><option>English Trainer</option><option>SSM</option><option>Program Lead</option></select>
+      <label>Comment</label>
+      <textarea id="f_text" placeholder="What do you want to log?"></textarea>`;
+  }
+  if(logEntryType === 'attendance'){
+    return `
+      <label>Date</label><input type="date" id="f_date">
+      <label>Subject</label><select id="f_subject"><option>Math</option><option>English</option></select>
+      <label>Status</label><select id="f_status"><option>Held</option><option>Cancelled</option></select>
+      <label>Reason (if cancelled)</label><input type="text" id="f_reason" placeholder="Optional">`;
+  }
+  if(logEntryType === 'ptm'){
+    return `
+      <label>Date</label><input type="date" id="f_ptmdate">
+      <label>Notes</label><textarea id="f_notes" placeholder="What was discussed?"></textarea>`;
+  }
+  return '';
+}
+
+function confirmWhoAmI(){
+  const sel = document.getElementById('whoSelect').value;
+  const email = document.getElementById('whoEmail') ? document.getElementById('whoEmail').value.trim() : '';
+  const who = email || sel;
+  if(!who) return;
+  localStorage.setItem('sgp_whoami', who);
+  renderLogModal();
+}
+
+async function postAction(payload){
+  const url = getApiUrl();
+  payload.entered_by = getWhoAmI();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if(json.error) throw new Error(json.error);
+  return json;
+}
+
+async function submitLogEntry(){
+  if(!logPickedStudent){
+    document.getElementById('logSaveStatus').className = 'save-status fail';
+    document.getElementById('logSaveStatus').textContent = 'Pick a student first.';
+    return;
+  }
+  const btn = document.getElementById('logSaveBtn');
+  btn.disabled = true;
+  try{
+    let payload = { student_id: logPickedStudent.id, student_name: logPickedStudent.name };
+    if(logEntryType === 'comment'){
+      payload.action = 'add_comment';
+      payload.commenter_role = document.getElementById('f_role').value;
+      payload.comment_text = document.getElementById('f_text').value.trim();
+      if(!payload.comment_text) throw new Error('Comment is empty.');
+    } else if(logEntryType === 'attendance'){
+      payload.action = 'log_attendance';
+      payload.class_date = document.getElementById('f_date').value;
+      payload.subject = document.getElementById('f_subject').value;
+      payload.status = document.getElementById('f_status').value;
+      payload.cancellation_reason = document.getElementById('f_reason').value.trim();
+      payload.cancelled_by = payload.status === 'Cancelled' ? 'Student' : '';
+      if(!payload.class_date) throw new Error('Pick a date.');
+    } else if(logEntryType === 'ptm'){
+      payload.action = 'log_ptm';
+      payload.ptm_date = document.getElementById('f_ptmdate').value;
+      payload.notes = document.getElementById('f_notes').value.trim();
+      if(!payload.ptm_date) throw new Error('Pick a date.');
+    }
+    await postAction(payload);
+    document.getElementById('logSaveStatus').className = 'save-status ok';
+    document.getElementById('logSaveStatus').textContent = 'Saved.';
+    await refreshData();
+    setTimeout(closeLogModal, 700);
+  } catch(err){
+    document.getElementById('logSaveStatus').className = 'save-status fail';
+    document.getElementById('logSaveStatus').textContent = 'Could not save: ' + err.message;
+  }
+  btn.disabled = false;
+}
+
+function downloadBackup(){
+  const blob = new Blob([JSON.stringify(RAW, null, 1)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=`SGP_Live_Backup_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+boot();
+</script>
+</body>
+</html>
