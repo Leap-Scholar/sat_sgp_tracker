@@ -219,6 +219,17 @@ let viewMode = 'overview';
 let searchTerm = '';
 let trainerFilter = '';
 let logPickedStudent = null;
+// Permanent registry for clickable breakdown groups (Insights rows, crosstab cells,
+// status summaries). Keyed by an ever-increasing id, never reset - so a group
+// rendered on one part of the page can never go stale or collide with another
+// part's groups, unlike a shared array that gets cleared on each re-render.
+window.__drillGroups = window.__drillGroups || {};
+window.__drillSeq = window.__drillSeq || 0;
+function registerDrillGroup(items){
+  const key = 'g' + (window.__drillSeq++);
+  window.__drillGroups[key] = items;
+  return key;
+}
 let logEntryType = 'comment';
 
 const TABS = [
@@ -564,8 +575,8 @@ function buildStatusSummaries(){
       (buckets[key] = buckets[key] || []).push(s);
     });
     const rows = Object.entries(buckets).sort((a,b)=>b[1].length-a[1].length).map(([label, items]) => {
-      const gid = window.__insightGroups.push(items) - 1;
-      return `<div style="display:flex; justify-content:space-between; font-size:12.5px; padding:3px 0; cursor:pointer;" onclick="showDrill('Goal achieved — ${label.replace(/'/g,"\\'")}', __insightGroups[${gid}])">
+      const gid = registerDrillGroup(items);
+      return `<div style="display:flex; justify-content:space-between; font-size:12.5px; padding:3px 0; cursor:pointer;" onclick="showDrill('Goal achieved — ${label.replace(/'/g,"\\'")}', __drillGroups['${gid}'])">
         <span>${label}</span><span class="sub2">${items.length}</span>
       </div>`;
     }).join('');
@@ -701,7 +712,6 @@ function render(){
 // each computed live from whatever tab/search/trainer filter is currently active,
 // so "Insights" always reflects the same slice of students you're already looking at.
 function renderInsights(list){
-  window.__insightGroups = [];
   function groupBy(items, keyFn){
     const g = {};
     items.forEach(it => {
@@ -719,8 +729,8 @@ function renderInsights(list){
     opts = opts || {};
     const rows = Object.entries(groups).sort((a,b) => b[1].length - a[1].length).map(([label, items]) => {
       const rate = achievedRate(items);
-      const groupId = window.__insightGroups.push(items) - 1;
-      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line-soft, #EFEEE9); font-size:13px; cursor:pointer;" onclick="showDrill('${title} — ${label.replace(/'/g,"\\'")}', __insightGroups[${groupId}])">
+      const groupId = registerDrillGroup(items);
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line-soft, #EFEEE9); font-size:13px; cursor:pointer;" onclick="showDrill('${title} — ${label.replace(/'/g,"\\'")}', __drillGroups['${groupId}'])">
         <span>${label}</span>
         <span style="color:var(--ink-soft); font-size:12.5px;">${items.length} student${items.length===1?'':'s'}${rate!==null?' &middot; '+rate.pct+'% achieved (of '+rate.known+' with a known outcome)':''}</span>
       </div>`;
@@ -748,17 +758,17 @@ function renderInsights(list){
     const cells = courseKeys.map(ct => {
       const cellList = monthList.filter(s => matchesCourse(s, ct));
       const rate = achievedRate(cellList);
-      const gid = window.__insightGroups.push(cellList) - 1;
-      return `<td style="text-align:center; cursor:pointer; padding:8px;" onclick="showDrill('${m} — ${ct}', __insightGroups[${gid}])">
+      const gid = registerDrillGroup(cellList);
+      return `<td style="text-align:center; cursor:pointer; padding:8px;" onclick="showDrill('${m} — ${ct}', __drillGroups['${gid}'])">
         ${cellList.length ? cellList.length + (rate?' <span class="sub2">('+rate.pct+'%)</span>':'') : '<span class="sub2">0</span>'}
       </td>`;
     }).join('');
     const rate = achievedRate(monthList);
-    const gidTotal = window.__insightGroups.push(monthList) - 1;
+    const gidTotal = registerDrillGroup(monthList);
     return `<tr style="border-bottom:1px solid var(--line-soft,#EFEEE9);">
       <td style="padding:8px; font-weight:500;">${m}</td>
       ${cells}
-      <td style="text-align:center; padding:8px; cursor:pointer; font-weight:500;" onclick="showDrill('${m} — All', __insightGroups[${gidTotal}])">
+      <td style="text-align:center; padding:8px; cursor:pointer; font-weight:500;" onclick="showDrill('${m} — All', __drillGroups['${gidTotal}'])">
         ${monthList.length}${rate?' <span class="sub2">('+rate.pct+'%)</span>':''}
       </td>
     </tr>`;
@@ -766,9 +776,9 @@ function renderInsights(list){
   // Students with no test_month don't appear in any row above - surface them separately
   // so nobody is silently missing from the view.
   const noMonthList = list.filter(s => !s.test_month);
-  const gidNoMonth = window.__insightGroups.push(noMonthList) - 1;
+  const gidNoMonth = registerDrillGroup(noMonthList);
   const noMonthLine = noMonthList.length
-    ? `<div style="margin-top:10px; font-size:12.5px; color:var(--ink-soft); cursor:pointer;" onclick="showDrill('No test month logged', __insightGroups[${gidNoMonth}])">
+    ? `<div style="margin-top:10px; font-size:12.5px; color:var(--ink-soft); cursor:pointer;" onclick="showDrill('No test month logged', __drillGroups['${gidNoMonth}'])">
         <span class="pill slate" style="cursor:pointer;">${noMonthList.length} with no test month logged</span> - not in the table above, click to view
        </div>` : '';
   const crosstabTable = `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel); grid-column:1 / -1;">
