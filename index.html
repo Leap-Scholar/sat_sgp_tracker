@@ -201,6 +201,7 @@
 <div id="insightsRoot" style="display:none;"></div>
 
 <div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
+<div class="overlay" id="drillOverlay" onclick="if(event.target===this) closeDrill()"><div class="panel" id="drillPanel" style="max-width:640px;"></div></div>
 
 </div>
 
@@ -328,6 +329,10 @@ function buildStudentView(raw){
     s.hw_completion_pct = logged ? (s.attendance_log.filter(a => a.hw_done === 'TRUE').length / logged) : null;
     s.error_log_pct = logged ? (s.attendance_log.filter(a => a.error_log_filled === 'TRUE').length / logged) : null;
     s.test_taken_pct = logged ? (s.attendance_log.filter(a => a.test_taken === 'TRUE').length / logged) : null;
+    s.classes_held_math = s.attendance_log.filter(a => a.subject === 'Math' && a.status === 'Held').length;
+    s.classes_held_english = s.attendance_log.filter(a => a.subject === 'English' && a.status === 'Held').length;
+    s.classes_left_math = s.total_classes_math ? (Number(s.total_classes_math) - s.classes_held_math) : null;
+    s.classes_left_english = s.total_classes_english ? (Number(s.total_classes_english) - s.classes_held_english) : null;
 
     // Void: manual flag OR computed from the actual >10% cancellation / >4 reschedule rules.
     // Score-guarantee void only applies to SGP students - Non-SGP has no such guarantee,
@@ -384,10 +389,18 @@ function buildStatStrip(){
   const total=STUDENTS.length, achieved=STUDENTS.filter(s=>s.achieved===true).length,
         notAchieved=STUDENTS.filter(s=>s.achieved===false).length, voidRisk=STUDENTS.filter(s=>s.is_void_risk).length,
         unresolved=STUDENTS.filter(s=>s.achieved===null).length;
-  document.getElementById('statStrip').innerHTML = [
-    ['Total students',total,'c-total'],['Goal achieved',achieved,'c-achieved'],['Not achieved',notAchieved,'c-notachieved'],
-    ['Void risk',voidRisk,'c-void'],['Outcome pending',unresolved,'c-unresolved'],
-  ].map(([l,n,c]) => `<div class="stat ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  const statDefs = [
+    ['Total students', () => STUDENTS],
+    ['Goal achieved', () => STUDENTS.filter(s=>s.achieved===true)],
+    ['Not achieved', () => STUDENTS.filter(s=>s.achieved===false)],
+    ['Void risk', () => STUDENTS.filter(s=>s.is_void_risk)],
+    ['Outcome pending', () => STUDENTS.filter(s=>s.achieved===null)],
+  ];
+  const classes = ['c-total','c-achieved','c-notachieved','c-void','c-unresolved'];
+  window.STAT_DEFS = statDefs;
+  document.getElementById('statStrip').innerHTML = statDefs.map(([l,getList], i) =>
+    `<div class="stat ${classes[i]}" style="cursor:pointer;" onclick="showDrill(STAT_DEFS[${i}][0], STAT_DEFS[${i}][1]())"><div class="n">${getList().length}</div><div class="l">${l}</div></div>`
+  ).join('');
   document.getElementById('coverageNote').innerHTML =
     total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no attempt logged yet, or an attempt with no outcome marked - not necessarily untested, just not yet recorded.` : '';
   buildRootCauseOverview();
@@ -470,18 +483,26 @@ function buildOperationalRollups(){
 }
 
 function buildTrainerOptions(){
-  const set = new Set();
-  STUDENTS.forEach(s => { if(s.math_trainer) set.add(s.math_trainer); if(s.english_trainer) set.add(s.english_trainer); });
+  const mathSet = new Set(), englishSet = new Set();
+  STUDENTS.forEach(s => { if(s.math_trainer) mathSet.add(s.math_trainer); if(s.english_trainer) englishSet.add(s.english_trainer); });
   const sel = document.getElementById('trainerFilter');
   sel.innerHTML = '<option value="">All trainers</option>';
-  [...set].sort().forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
+  const mathGroup = document.createElement('optgroup'); mathGroup.label = 'Math trainers';
+  [...mathSet].sort().forEach(t => { const o=document.createElement('option'); o.value='math:'+t; o.textContent=t; mathGroup.appendChild(o); });
+  sel.appendChild(mathGroup);
+  const engGroup = document.createElement('optgroup'); engGroup.label = 'English trainers';
+  [...englishSet].sort().forEach(t => { const o=document.createElement('option'); o.value='eng:'+t; o.textContent=t; engGroup.appendChild(o); });
+  sel.appendChild(engGroup);
   sel.onchange = () => { trainerFilter = sel.value; render(); };
 }
 
 function currentList(){
   const tab = TABS.find(t => t.key === activeTab);
   let list = STUDENTS.filter(tab.filter);
-  if(trainerFilter) list = list.filter(s => s.math_trainer===trainerFilter || s.english_trainer===trainerFilter);
+  if(trainerFilter){
+    if(trainerFilter.startsWith('math:')) list = list.filter(s => s.math_trainer === trainerFilter.slice(5));
+    else if(trainerFilter.startsWith('eng:')) list = list.filter(s => s.english_trainer === trainerFilter.slice(4));
+  }
   if(searchTerm){
     const q = searchTerm.toLowerCase();
     list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.math_trainer||'').toLowerCase().includes(q) ||
@@ -498,14 +519,14 @@ function renderHead(){
 function renderRow(s){
   if(viewMode==='overview'){
     return `<tr data-id="${s.student_id}">
-      <td><div class="name">${s.name}</div><div class="sub2">${s.email||''}</div></td>
+      <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
       <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
       <td>${statusPill(s)}</td>
       <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td>
       <td>${rootCauseTags(s)}</td></tr>`;
   }
   return `<tr data-id="${s.student_id}">
-    <td><div class="name">${s.name}</div><div class="sub2">${s.email||''}</div></td>
+    <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
     <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
     <td>${s.attempt_type||'—'}${s.test_month?'<div class="sub2">'+s.test_month+'</div>':''}</td>
     <td class="num">${s.target||'—'}</td>
@@ -541,6 +562,7 @@ function render(){
 // each computed live from whatever tab/search/trainer filter is currently active,
 // so "Insights" always reflects the same slice of students you're already looking at.
 function renderInsights(list){
+  window.__insightGroups = [];
   function groupBy(items, keyFn){
     const g = {};
     items.forEach(it => {
@@ -552,15 +574,16 @@ function renderInsights(list){
   function achievedRate(items){
     const known = items.filter(s => s.achieved !== null);
     if(!known.length) return null;
-    return Math.round(known.filter(s => s.achieved === true).length / known.length * 100);
+    return { pct: Math.round(known.filter(s => s.achieved === true).length / known.length * 100), known: known.length };
   }
   function card(title, groups, opts){
     opts = opts || {};
     const rows = Object.entries(groups).sort((a,b) => b[1].length - a[1].length).map(([label, items]) => {
       const rate = achievedRate(items);
-      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line-soft, #EFEEE9); font-size:13px;">
+      const groupId = window.__insightGroups.push(items) - 1;
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line-soft, #EFEEE9); font-size:13px; cursor:pointer;" onclick="showDrill('${title} — ${label.replace(/'/g,"\\'")}', __insightGroups[${groupId}])">
         <span>${label}</span>
-        <span style="color:var(--ink-soft); font-size:12.5px;">${items.length} student${items.length===1?'':'s'}${rate!==null?' &middot; '+rate+'% achieved':''}</span>
+        <span style="color:var(--ink-soft); font-size:12.5px;">${items.length} student${items.length===1?'':'s'}${rate!==null?' &middot; '+rate.pct+'% achieved (of '+rate.known+' with a known outcome)':''}</span>
       </div>`;
     }).join('');
     return `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
@@ -569,7 +592,7 @@ function renderInsights(list){
     </div>`;
   }
 
-  const byCourse = groupBy(list, s => s.course_type);
+  const byCourse = groupBy(list, s => s.course_type ? s.course_type : '— (course type not set)');
   const byMonth = groupBy(list.filter(s => s.test_month), s => s.test_month);
   const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer);
   const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer);
@@ -634,6 +657,9 @@ function openPanel(s){
       <div class="field"><div class="k">Diagnostic (M/E)</div><div class="v">${s.diag_math||'—'} / ${s.diag_english||'—'}</div></div>
       <div class="field"><div class="k">Latest score</div><div class="v">${fmtScore(s.latest_score)}</div></div>
       <div class="field"><div class="k">Milestone</div><div class="v">${s.milestone_status||'—'}</div></div>
+      <div class="field"><div class="k">Hours purchased</div><div class="v">${s.total_hours||'—'}</div></div>
+      <div class="field"><div class="k">Classes held (M/E)</div><div class="v">${s.classes_held_math} / ${s.classes_held_english}</div></div>
+      <div class="field"><div class="k">Classes left (M/E)</div><div class="v">${s.classes_left_math!=null?s.classes_left_math:'—'} / ${s.classes_left_english!=null?s.classes_left_english:'—'}</div></div>
     </div>
 
     <div class="section-title">Root cause <span class="sub2">${(s.root_cause_log||[]).length} logged</span></div>
@@ -683,6 +709,28 @@ function openPanel(s){
   document.getElementById('overlay').classList.add('open');
 }
 function closePanel(){ document.getElementById('overlay').classList.remove('open'); }
+
+// Generic drill-down: click any count anywhere (stat card, insights row, etc.) and see
+// exactly which students make it up, not just a number.
+function showDrill(title, list){
+  const rows = list.map(s => {
+    const missingEmail = !s.email;
+    return `<div class="comment-item" style="cursor:pointer;" onclick="closeDrill(); openPanel(STUDENTS.find(x=>x.student_id==='${s.student_id}'))">
+      <div class="txt"><b>${s.name}</b> ${missingEmail ? '<span class="pill red" title="No email on record">no email</span>' : ''}</div>
+      <div class="meta">${s.course_type || 'course type not set'} &middot; Math: ${s.math_trainer||'—'} &middot; English: ${s.english_trainer||'—'} &middot; ${statusPill(s)}</div>
+      <div class="meta">Hours: ${s.total_hours||'—'} &middot; Classes held (M/E): ${s.classes_held_math}/${s.classes_held_english}${s.classes_left_math!=null||s.classes_left_english!=null?' &middot; Left: '+(s.classes_left_math??'—')+'/'+(s.classes_left_english??'—'):''}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('drillPanel').innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
+      <span style="font-size:15px; font-weight:600;">${title} <span class="sub2">(${list.length})</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer;">&times;</span>
+    </div>
+    <div class="comment-list">${rows || '<div class="placeholder-box">No students match.</div>'}</div>
+  `;
+  document.getElementById('drillOverlay').classList.add('open');
+}
+function closeDrill(){ document.getElementById('drillOverlay').classList.remove('open'); }
 document.getElementById('overlay').addEventListener('click', e => { if(e.target.id==='overlay') closePanel(); });
 document.getElementById('searchBox').addEventListener('input', e => { searchTerm=e.target.value; render(); });
 [...document.querySelectorAll('.view-opt')].forEach(el => el.addEventListener('click', () => {
@@ -753,6 +801,7 @@ function renderLogModal(){
       <div class="entry-type-opt ${logEntryType==='testscore'?'active':''}" onclick="setLogEntryType('testscore')">Test Score</div>
       <div class="entry-type-opt ${logEntryType==='attempt'?'active':''}" onclick="setLogEntryType('attempt')">Attempt</div>
       <div class="entry-type-opt ${logEntryType==='trainerchange'?'active':''}" onclick="setLogEntryType('trainerchange')">Trainer Change</div>
+      <div class="entry-type-opt ${logEntryType==='purchaseinfo'?'active':''}" onclick="setLogEntryType('purchaseinfo')">Hours/Classes</div>
     </div>
 
     <div id="logFormFields">${renderLogFormFields()}</div>
@@ -894,7 +943,20 @@ function renderLogFormFields(){
       <label>English trainer</label><input type="text" id="f_engtrainer" placeholder="Trainer name">
       <label>SSM</label><input type="text" id="f_ssm" placeholder="SSM name">
       <label>Target</label><input type="text" id="f_target" placeholder="e.g. 1500+ or 200 point">
-      <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">`;
+      <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">
+      <div class="entry-form-row" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Classes purchased - Math (optional)</label><input type="number" id="f_classesmath" placeholder="e.g. 20"></div>
+        <div style="flex:1;"><label>Classes purchased - English (optional)</label><input type="number" id="f_classeseng" placeholder="e.g. 20"></div>
+      </div>`;
+  }
+  if(logEntryType === 'purchaseinfo'){
+    return `
+      <label>Total hours allocated</label><input type="number" id="f_puhours" placeholder="e.g. 40">
+      <div class="entry-form-row" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Classes purchased - Math</label><input type="number" id="f_puclassesmath" placeholder="e.g. 20"></div>
+        <div style="flex:1;"><label>Classes purchased - English</label><input type="number" id="f_puclasseseng" placeholder="e.g. 20"></div>
+      </div>
+      <div class="placeholder-box" style="margin-top:6px;">Only fields you fill in get updated - leave a box blank to leave that value as-is.</div>`;
   }
   return '';
 }
@@ -944,7 +1006,15 @@ async function submitLogEntry(){
       payload.ssm = document.getElementById('f_ssm').value.trim();
       payload.target = document.getElementById('f_target').value.trim();
       payload.total_hours = document.getElementById('f_hours').value;
+      payload.total_classes_math = document.getElementById('f_classesmath').value;
+      payload.total_classes_english = document.getElementById('f_classeseng').value;
       if(!payload.name) throw new Error('Student name is required.');
+    } else if(logEntryType === 'purchaseinfo'){
+      payload.action = 'update_purchase_info';
+      payload.total_hours = document.getElementById('f_puhours').value;
+      payload.total_classes_math = document.getElementById('f_puclassesmath').value;
+      payload.total_classes_english = document.getElementById('f_puclasseseng').value;
+      if(!payload.total_hours && !payload.total_classes_math && !payload.total_classes_english) throw new Error('Fill in at least one field.');
     } else if(logEntryType === 'comment'){
       payload.action = 'add_comment';
       payload.commenter_role = document.getElementById('f_role').value;
