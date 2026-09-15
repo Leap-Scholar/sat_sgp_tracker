@@ -90,8 +90,6 @@
   .overlay{position:fixed; inset:0; background:rgba(27,36,48,0.35); display:none; align-items:flex-start; justify-content:flex-end; z-index:50;}
   .overlay.open{display:flex;}
   .panel{width:min(600px, 94vw); height:100%; background:var(--panel); box-shadow:-8px 0 30px rgba(0,0,0,.12); overflow-y:auto; padding:28px 28px 60px; position:relative;}
-  .drill-overlay{align-items:stretch; justify-content:stretch;}
-  .drill-panel{width:100%; height:100%; max-width:none !important; box-shadow:none;}
   .panel-actions{position:absolute; top:20px; right:20px; display:flex; gap:8px;}
   .icon-btn{width:30px; height:30px; border-radius:8px; border:1px solid var(--line); background:var(--panel); cursor:pointer; font-size:14px; color:var(--ink-soft); display:flex; align-items:center; justify-content:center;}
   .icon-btn:hover{background:var(--slate-bg);}
@@ -176,6 +174,7 @@
   <div class="stat-strip" id="statStrip"></div>
   <div class="coverage-note" id="coverageNote"></div>
   <div id="rootCauseOverview" style="margin-top:14px;"></div>
+  <div id="statusSummaries" style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:14px;"></div>
   <div id="operationalRollups" style="margin-top:14px;"></div>
 </div>
 
@@ -203,7 +202,7 @@
 <div id="insightsRoot" style="display:none;"></div>
 
 <div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
-<div class="overlay drill-overlay" id="drillOverlay" onclick="if(event.target===this) closeDrill()"><div class="panel drill-panel" id="drillPanel"></div></div>
+<div class="overlay" id="drillOverlay" onclick="if(event.target===this) closeDrill()"><div class="panel" id="drillPanel"></div></div>
 
 </div>
 
@@ -474,6 +473,7 @@ function buildStatStrip(){
   document.getElementById('coverageNote').innerHTML =
     total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no attempt logged yet, or an attempt with no outcome marked - not necessarily untested, just not yet recorded.` : '';
   buildRootCauseOverview();
+  buildStatusSummaries();
   buildOperationalRollups();
 }
 
@@ -529,6 +529,55 @@ function buildRootCauseOverview(){
 
 // Referral count, scorecard collection rate, PTM-overdue list - real operational
 // rollups, not per-student digging.
+// Short "why" summaries for Void risk and Goal achieved - same idea as the
+// not-achieved breakdown, so Rajgeetha gets context on every stat card, not just one.
+function buildStatusSummaries(){
+  const el = document.getElementById('statusSummaries');
+  const parts = [];
+
+  // Void risk: computed (cancellation/reschedule) vs manually flagged, with the actual
+  // void_reason text quoted where set.
+  const voidStudents = STUDENTS.filter(s => s.is_void_risk);
+  if(voidStudents.length){
+    const computed = voidStudents.filter(s => s.void_computed_reason);
+    const manual = voidStudents.filter(s => s.is_void_manual);
+    const reasons = [...new Set(manual.map(s => s.void_reason).filter(Boolean))];
+    const bits = [];
+    if(computed.length) bits.push(`${computed.length} from cancellation/reschedule rules`);
+    if(manual.length) bits.push(`${manual.length} manually flagged`);
+    parts.push(`<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
+      <div style="font-size:13.5px; font-weight:600; margin-bottom:6px; cursor:pointer;" onclick="showDrill('Void risk', STUDENTS.filter(s=>s.is_void_risk))">Why ${voidStudents.length} are void risk</div>
+      <div style="font-size:12.5px; color:var(--ink-soft); line-height:1.5;">
+        ${bits.join('; ')}${reasons.length ? `. Reasons on record: "${reasons.join('", "')}".` : (manual.length ? '. No reason text recorded for the manually-flagged ones.' : '')}
+      </div>
+    </div>`);
+  }
+
+  // Goal achieved: split by target type (absolute score vs point-improvement), since
+  // "achieved" means different things depending on which target a student was on.
+  const achievedStudents = STUDENTS.filter(s => s.achieved === true);
+  if(achievedStudents.length){
+    const buckets = {};
+    achievedStudents.forEach(s => {
+      const n = Number(s.target_numeric);
+      const key = !n ? 'Target not specified' : (n >= 1000 ? `Absolute score (e.g. ${s.target})` : `Point improvement (e.g. ${s.target})`);
+      (buckets[key] = buckets[key] || []).push(s);
+    });
+    const rows = Object.entries(buckets).sort((a,b)=>b[1].length-a[1].length).map(([label, items]) => {
+      const gid = window.__insightGroups.push(items) - 1;
+      return `<div style="display:flex; justify-content:space-between; font-size:12.5px; padding:3px 0; cursor:pointer;" onclick="showDrill('Goal achieved — ${label.replace(/'/g,"\\'")}', __insightGroups[${gid}])">
+        <span>${label}</span><span class="sub2">${items.length}</span>
+      </div>`;
+    }).join('');
+    parts.push(`<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
+      <div style="font-size:13.5px; font-weight:600; margin-bottom:6px; cursor:pointer;" onclick="showDrill('Goal achieved', STUDENTS.filter(s=>s.achieved===true))">Why ${achievedStudents.length} achieved</div>
+      ${rows}
+    </div>`);
+  }
+
+  el.innerHTML = parts.join('');
+}
+
 function buildOperationalRollups(){
   const today = new Date();
   const totalReferrals = STUDENTS.reduce((sum,s) => sum + (s.referral_log||[]).length, 0);
@@ -682,19 +731,22 @@ function renderInsights(list){
     </div>`;
   }
 
-  const byCourse = groupBy(list, s => s.course_type ? s.course_type : '— (course type not set)');
-  const byMonth = groupBy(list.filter(s => s.test_month), s => s.test_month);
   const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer + ' (M)');
   const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer + ' (V)');
 
   // Month x course-type crosstab - one table with every metric together, instead of
   // digging through separate cards to cross-reference month against SGP/Non-SGP.
   const months = [...new Set(list.filter(s=>s.test_month).map(s=>s.test_month))].sort();
-  const courseKeys = ['SGP','Non-SGP'];
+  const courseKeys = ['SGP','Non-SGP','Not set'];
+  function matchesCourse(s, ct){
+    const c = (s.course_type||'').trim().toUpperCase();
+    if(ct === 'Not set') return !c;
+    return c === ct.toUpperCase();
+  }
   const crosstabRows = months.map(m => {
     const monthList = list.filter(s => s.test_month === m);
     const cells = courseKeys.map(ct => {
-      const cellList = monthList.filter(s => (s.course_type||'').toUpperCase() === ct.toUpperCase());
+      const cellList = monthList.filter(s => matchesCourse(s, ct));
       const rate = achievedRate(cellList);
       const gid = window.__insightGroups.push(cellList) - 1;
       return `<td style="text-align:center; cursor:pointer; padding:8px;" onclick="showDrill('${m} — ${ct}', __insightGroups[${gid}])">
@@ -711,22 +763,29 @@ function renderInsights(list){
       </td>
     </tr>`;
   }).join('');
+  // Students with no test_month don't appear in any row above - surface them separately
+  // so nobody is silently missing from the view.
+  const noMonthList = list.filter(s => !s.test_month);
+  const gidNoMonth = window.__insightGroups.push(noMonthList) - 1;
+  const noMonthLine = noMonthList.length
+    ? `<div style="margin-top:10px; font-size:12.5px; color:var(--ink-soft); cursor:pointer;" onclick="showDrill('No test month logged', __insightGroups[${gidNoMonth}])">
+        <span class="pill slate" style="cursor:pointer;">${noMonthList.length} with no test month logged</span> - not in the table above, click to view
+       </div>` : '';
   const crosstabTable = `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel); grid-column:1 / -1;">
     <div style="font-size:13.5px; font-weight:600; margin-bottom:10px;">Month × course type ${months.length ? '' : '<span class="sub2">(no test months logged for this view)</span>'}</div>
     ${months.length ? `<table style="width:100%; border-collapse:collapse; font-size:13px;">
       <thead><tr style="color:var(--ink-soft); text-align:center;">
         <th style="text-align:left; padding:6px 8px; font-weight:400;">Test month</th>
-        <th style="font-weight:400;">SGP</th><th style="font-weight:400;">Non-SGP</th><th style="font-weight:400;">Total</th>
+        <th style="font-weight:400;">SGP</th><th style="font-weight:400;">Non-SGP</th><th style="font-weight:400;">Not set</th><th style="font-weight:400;">Total</th>
       </tr></thead>
       <tbody>${crosstabRows}</tbody>
     </table>` : ''}
+    ${noMonthLine}
   </div>`;
 
   document.getElementById('insightsRoot').innerHTML = `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px;">
       ${crosstabTable}
-      ${card('SGP vs Non-SGP', byCourse)}
-      ${card('By test month', byMonth)}
       ${card('By Math trainer', byMathTrainer)}
       ${card('By English trainer', byEnglishTrainer)}
     </div>
@@ -788,7 +847,8 @@ function openPanel(s){
       <div class="field"><div class="k">Classes left (M/E)</div><div class="v">${s.classes_left_math!=null?s.classes_left_math:'—'} / ${s.classes_left_english!=null?s.classes_left_english:'—'}</div></div>
     </div>
 
-    <div class="section-title">Why <span class="sub2">auto-generated from logged data — not a substitute for reading the actual comments below</span></div>
+    <div class="section-title">Why</div>
+    <div class="sub2" style="display:block; margin:-6px 0 8px; font-size:11.5px; line-height:1.4; text-transform:none; letter-spacing:normal;">auto-generated from logged data — not a substitute for reading the actual comments below</div>
     <div class="placeholder-box" style="border-style:solid; background:var(--violet-bg,#EEEAFB); border-color:#D6CEEE; line-height:1.6;">
       ${buildWhySummary(s)}
     </div>
@@ -853,13 +913,11 @@ function showDrill(title, list){
     </div>`;
   }).join('');
   document.getElementById('drillPanel').innerHTML = `
-    <div style="max-width:900px; margin:0 auto;">
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;">
-      <span style="font-size:18px; font-weight:600;">${title} <span class="sub2">(${list.length})</span></span>
-      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:22px;">&times;</span>
+      <span style="font-size:16px; font-weight:600;">${title} <span class="sub2">(${list.length})</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span>
     </div>
     <div class="comment-list">${rows || '<div class="placeholder-box">No students match.</div>'}</div>
-    </div>
   `;
   document.getElementById('drillOverlay').classList.add('open');
 }
