@@ -90,6 +90,8 @@
   .overlay{position:fixed; inset:0; background:rgba(27,36,48,0.35); display:none; align-items:flex-start; justify-content:flex-end; z-index:50;}
   .overlay.open{display:flex;}
   .panel{width:min(600px, 94vw); height:100%; background:var(--panel); box-shadow:-8px 0 30px rgba(0,0,0,.12); overflow-y:auto; padding:28px 28px 60px; position:relative;}
+  .drill-overlay{align-items:stretch; justify-content:stretch;}
+  .drill-panel{width:100%; height:100%; max-width:none !important; box-shadow:none;}
   .panel-actions{position:absolute; top:20px; right:20px; display:flex; gap:8px;}
   .icon-btn{width:30px; height:30px; border-radius:8px; border:1px solid var(--line); background:var(--panel); cursor:pointer; font-size:14px; color:var(--ink-soft); display:flex; align-items:center; justify-content:center;}
   .icon-btn:hover{background:var(--slate-bg);}
@@ -201,7 +203,7 @@
 <div id="insightsRoot" style="display:none;"></div>
 
 <div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
-<div class="overlay" id="drillOverlay" onclick="if(event.target===this) closeDrill()"><div class="panel" id="drillPanel" style="max-width:640px;"></div></div>
+<div class="overlay drill-overlay" id="drillOverlay" onclick="if(event.target===this) closeDrill()"><div class="panel drill-panel" id="drillPanel"></div></div>
 
 </div>
 
@@ -361,6 +363,74 @@ function buildStudentView(raw){
   return Object.values(byId);
 }
 
+// Builds a plain-language "why" summary purely from structured signals already logged -
+// cancellation %, reschedules, HW/error-log/test-taken rates, score gap, milestone trend,
+// plus the actual cancellation reasons, PTM notes, and comments typed in, quoted verbatim.
+// This does NOT read/understand free text - it surfaces real numbers and real quotes so
+// a person can judge the "why" in seconds instead of opening five sections and scrolling.
+function buildWhySummary(s){
+  const bits = [];
+
+  // Achievement / score gap
+  if(s.achieved === false){
+    const gapNote = (s.target_numeric && s.latest_score) ? ` (target ${s.target}, scored ${s.latest_score})` : '';
+    bits.push(`<b>Not achieved</b>${gapNote}.`);
+  } else if(s.achieved === true){
+    bits.push(`<b>Achieved</b> target${s.target?' of '+s.target:''}.`);
+  } else {
+    bits.push(`<b>Outcome not yet known</b> — no attempt result logged.`);
+  }
+
+  // Regularity
+  const loggedCount = (s.attendance_log||[]).length;
+  if(loggedCount){
+    const pct = Math.round(s.cancellation_pct*100);
+    if(s.cancellation_pct > 0.10) bits.push(`Cancellation rate is <b>${pct}%</b> — above the 10% void threshold.`);
+    else if(s.cancellation_pct > 0) bits.push(`Cancellation rate is ${pct}%, within the normal range.`);
+    if(s.reschedule_count > 4) bits.push(`<b>${s.reschedule_count} reschedules</b> — above the limit of 4.`);
+    else if(s.reschedule_count > 0) bits.push(`${s.reschedule_count} reschedule${s.reschedule_count===1?'':'s'} logged.`);
+    if(s.hw_completion_pct != null && s.hw_completion_pct < 0.7) bits.push(`Homework completion is low at ${Math.round(s.hw_completion_pct*100)}%.`);
+    if(s.error_log_pct != null && s.error_log_pct < 0.7) bits.push(`Error log completion is low at ${Math.round(s.error_log_pct*100)}%.`);
+    if(s.test_taken_pct != null && s.test_taken_pct < 0.7) bits.push(`Only ${Math.round(s.test_taken_pct*100)}% of scheduled tests were actually taken.`);
+  } else {
+    bits.push(`No attendance logged yet - regularity can't be assessed.`);
+  }
+
+  // Real cancellation reasons, verbatim
+  const reasons = [...new Set((s.attendance_log||[]).filter(a => a.status==='Cancelled' && a.cancellation_reason).map(a => a.cancellation_reason))];
+  if(reasons.length) bits.push(`Cancellation reasons on record: "${reasons.join('", "')}".`);
+
+  // Milestone trend
+  if((s.milestone_log||[]).length){
+    bits.push(`Latest milestone (${(s.milestone_log[s.milestone_log.length-1].milestone_date||'').toString().slice(0,10)}): "${s.milestone_status}".`);
+  }
+
+  // Most recent PTM note, verbatim
+  const ptms = (s.ptm_log||[]).slice().sort((a,b) => new Date(a.ptm_date||0)-new Date(b.ptm_date||0));
+  if(ptms.length){
+    const last = ptms[ptms.length-1];
+    if(last.notes) bits.push(`Most recent PTM (${(last.ptm_date||'').toString().slice(0,10)}): "${last.notes}".`);
+  } else {
+    bits.push(`No PTM logged yet.`);
+  }
+
+  // Most recent comment, verbatim
+  const comments = (s.weekly_comments||[]).slice().sort((a,b) => new Date(a.entered_at||0)-new Date(b.entered_at||0));
+  if(comments.length){
+    const last = comments[comments.length-1];
+    bits.push(`Latest comment (${last.commenter_role||''}): "${last.comment_text}".`);
+  }
+
+  // Manually tagged root causes, if any
+  if((s.root_cause_tags||[]).length){
+    bits.push(`Tagged: ${s.root_cause_tags.join(', ')}.`);
+  } else if(s.achieved === false){
+    bits.push(`No root cause tagged yet - log one via + Log Entry → Root Cause.`);
+  }
+
+  return bits.map(b => `<div style="margin-bottom:4px;">• ${b}</div>`).join('');
+}
+
 function statusPill(s){
   if(s.is_void_risk){
     const why = s.void_computed_reason ? ` — ${s.void_computed_reason}` : (s.void_reason ? ` — ${s.void_reason}` : '');
@@ -421,6 +491,25 @@ function buildRootCauseOverview(){
   tagged.forEach(s => s.root_cause_tags.forEach(t => { counts[t] = (counts[t]||0) + 1; }));
   const totalTags = Object.values(counts).reduce((a,b) => a+b, 0);
   const untagged = notAchieved.length - tagged.length;
+
+  // Cohort-level auto-narrative for Rajgeetha - same real signals as the per-student
+  // "Why" summary, aggregated. Answers: how regular is this group, how many PTMs
+  // behind, what's the dominant tagged reason.
+  const withAttendance = notAchieved.filter(s => (s.attendance_log||[]).length);
+  const avgCancellation = withAttendance.length ? Math.round(withAttendance.reduce((sum,s)=>sum+s.cancellation_pct,0)/withAttendance.length*100) : null;
+  const overCancelLimit = notAchieved.filter(s => s.cancellation_pct > 0.10).length;
+  const overRescheduleLimit = notAchieved.filter(s => s.reschedule_count > 4).length;
+  const noPtmLogged = notAchieved.filter(s => !(s.ptm_log||[]).length).length;
+  const topCategory = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+
+  const narrativeBits = [];
+  if(avgCancellation != null) narrativeBits.push(`average cancellation rate across this group is ${avgCancellation}%`);
+  if(overCancelLimit) narrativeBits.push(`${overCancelLimit} student${overCancelLimit===1?'':'s'} over the 10% void threshold`);
+  if(overRescheduleLimit) narrativeBits.push(`${overRescheduleLimit} over the reschedule limit`);
+  if(noPtmLogged) narrativeBits.push(`${noPtmLogged} with no PTM logged at all`);
+  if(topCategory) narrativeBits.push(`most common tagged reason is "${topCategory[0]}" (${topCategory[1]} students)`);
+  const narrative = narrativeBits.length ? `Of ${notAchieved.length} not-achieved students: ${narrativeBits.join('; ')}.` : '';
+
   const rows = Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([cat,n]) => {
     const pct = Math.round((n/notAchieved.length)*100);
     return `<div style="margin-bottom:8px;">
@@ -433,6 +522,7 @@ function buildRootCauseOverview(){
       <span style="font-size:13.5px; font-weight:600;">Why students didn't hit target — ${notAchieved.length} not-achieved</span>
       <span class="sub2">${untagged} not yet tagged</span>
     </div>
+    ${narrative ? `<div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px; line-height:1.5;">${narrative}</div>` : ''}
     ${rows || '<div class="placeholder-box">No root causes tagged yet - log one from a student\'s panel (+ Log Entry → Root Cause).</div>'}
   </div>`;
 }
@@ -488,10 +578,10 @@ function buildTrainerOptions(){
   const sel = document.getElementById('trainerFilter');
   sel.innerHTML = '<option value="">All trainers</option>';
   const mathGroup = document.createElement('optgroup'); mathGroup.label = 'Math trainers';
-  [...mathSet].sort().forEach(t => { const o=document.createElement('option'); o.value='math:'+t; o.textContent=t; mathGroup.appendChild(o); });
+  [...mathSet].sort().forEach(t => { const o=document.createElement('option'); o.value='math:'+t; o.textContent=t+' (M)'; mathGroup.appendChild(o); });
   sel.appendChild(mathGroup);
-  const engGroup = document.createElement('optgroup'); engGroup.label = 'English trainers';
-  [...englishSet].sort().forEach(t => { const o=document.createElement('option'); o.value='eng:'+t; o.textContent=t; engGroup.appendChild(o); });
+  const engGroup = document.createElement('optgroup'); engGroup.label = 'Verbal/English trainers';
+  [...englishSet].sort().forEach(t => { const o=document.createElement('option'); o.value='eng:'+t; o.textContent=t+' (V)'; engGroup.appendChild(o); });
   sel.appendChild(engGroup);
   sel.onchange = () => { trainerFilter = sel.value; render(); };
 }
@@ -594,11 +684,47 @@ function renderInsights(list){
 
   const byCourse = groupBy(list, s => s.course_type ? s.course_type : '— (course type not set)');
   const byMonth = groupBy(list.filter(s => s.test_month), s => s.test_month);
-  const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer);
-  const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer);
+  const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer + ' (M)');
+  const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer + ' (V)');
+
+  // Month x course-type crosstab - one table with every metric together, instead of
+  // digging through separate cards to cross-reference month against SGP/Non-SGP.
+  const months = [...new Set(list.filter(s=>s.test_month).map(s=>s.test_month))].sort();
+  const courseKeys = ['SGP','Non-SGP'];
+  const crosstabRows = months.map(m => {
+    const monthList = list.filter(s => s.test_month === m);
+    const cells = courseKeys.map(ct => {
+      const cellList = monthList.filter(s => (s.course_type||'').toUpperCase() === ct.toUpperCase());
+      const rate = achievedRate(cellList);
+      const gid = window.__insightGroups.push(cellList) - 1;
+      return `<td style="text-align:center; cursor:pointer; padding:8px;" onclick="showDrill('${m} — ${ct}', __insightGroups[${gid}])">
+        ${cellList.length ? cellList.length + (rate?' <span class="sub2">('+rate.pct+'%)</span>':'') : '<span class="sub2">0</span>'}
+      </td>`;
+    }).join('');
+    const rate = achievedRate(monthList);
+    const gidTotal = window.__insightGroups.push(monthList) - 1;
+    return `<tr style="border-bottom:1px solid var(--line-soft,#EFEEE9);">
+      <td style="padding:8px; font-weight:500;">${m}</td>
+      ${cells}
+      <td style="text-align:center; padding:8px; cursor:pointer; font-weight:500;" onclick="showDrill('${m} — All', __insightGroups[${gidTotal}])">
+        ${monthList.length}${rate?' <span class="sub2">('+rate.pct+'%)</span>':''}
+      </td>
+    </tr>`;
+  }).join('');
+  const crosstabTable = `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel); grid-column:1 / -1;">
+    <div style="font-size:13.5px; font-weight:600; margin-bottom:10px;">Month × course type ${months.length ? '' : '<span class="sub2">(no test months logged for this view)</span>'}</div>
+    ${months.length ? `<table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr style="color:var(--ink-soft); text-align:center;">
+        <th style="text-align:left; padding:6px 8px; font-weight:400;">Test month</th>
+        <th style="font-weight:400;">SGP</th><th style="font-weight:400;">Non-SGP</th><th style="font-weight:400;">Total</th>
+      </tr></thead>
+      <tbody>${crosstabRows}</tbody>
+    </table>` : ''}
+  </div>`;
 
   document.getElementById('insightsRoot').innerHTML = `
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px;">
+      ${crosstabTable}
       ${card('SGP vs Non-SGP', byCourse)}
       ${card('By test month', byMonth)}
       ${card('By Math trainer', byMathTrainer)}
@@ -662,6 +788,11 @@ function openPanel(s){
       <div class="field"><div class="k">Classes left (M/E)</div><div class="v">${s.classes_left_math!=null?s.classes_left_math:'—'} / ${s.classes_left_english!=null?s.classes_left_english:'—'}</div></div>
     </div>
 
+    <div class="section-title">Why <span class="sub2">auto-generated from logged data — not a substitute for reading the actual comments below</span></div>
+    <div class="placeholder-box" style="border-style:solid; background:var(--violet-bg,#EEEAFB); border-color:#D6CEEE; line-height:1.6;">
+      ${buildWhySummary(s)}
+    </div>
+
     <div class="section-title">Root cause <span class="sub2">${(s.root_cause_log||[]).length} logged</span></div>
     <div style="margin-bottom:8px;">${rootCauseTags(s) || '<span class="sub2">Not applicable.</span>'}</div>
     ${(s.root_cause_log||[]).length ? `<div class="comment-list">${(s.root_cause_log||[]).slice().reverse().map(r =>
@@ -722,11 +853,13 @@ function showDrill(title, list){
     </div>`;
   }).join('');
   document.getElementById('drillPanel').innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
-      <span style="font-size:15px; font-weight:600;">${title} <span class="sub2">(${list.length})</span></span>
-      <span class="x" onclick="closeDrill()" style="cursor:pointer;">&times;</span>
+    <div style="max-width:900px; margin:0 auto;">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;">
+      <span style="font-size:18px; font-weight:600;">${title} <span class="sub2">(${list.length})</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:22px;">&times;</span>
     </div>
     <div class="comment-list">${rows || '<div class="placeholder-box">No students match.</div>'}</div>
+    </div>
   `;
   document.getElementById('drillOverlay').classList.add('open');
 }
