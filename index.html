@@ -127,6 +127,8 @@
   .entry-type-row{display:flex; gap:6px; margin-bottom:14px;}
   .entry-type-opt{flex:1; padding:9px 6px; border:1px solid var(--line); border-radius:8px; text-align:center; font-size:12px; font-weight:600; cursor:pointer; color:var(--ink-soft);}
   .entry-type-opt.active{background:var(--violet-bg); color:var(--violet); border-color:var(--violet);}
+  .checkbox-line{display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400; margin:4px 0; cursor:pointer;}
+  .checkbox-line input{width:auto; margin:0;}
   .log-modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:6px;}
   .save-status{font-size:12px; margin-top:8px; display:none;}
   .save-status.ok{color:var(--teal); display:block;}
@@ -171,6 +173,7 @@
   </div>
   <div class="stat-strip" id="statStrip"></div>
   <div class="coverage-note" id="coverageNote"></div>
+  <div id="rootCauseOverview" style="margin-top:14px;"></div>
 </div>
 
 <div class="tabs" id="tabs"></div>
@@ -267,15 +270,24 @@ function buildStudentView(raw){
 
   Object.values(byId).forEach(s => {
     s.math_trainer=''; s.english_trainer=''; s.secondary_math_trainer=''; s.secondary_english_trainer='';
-    s.test_scores=[]; s.weekly_comments=[]; s.reattempt_cycles=[]; s.milestone_status='';
-    s.root_cause_tags=[]; s.is_void_risk = s.is_void === 'TRUE' || s.is_void === true;
+    s.test_scores=[]; s.weekly_comments=[]; s.reattempt_cycles=[]; s.milestone_log=[];
+    s.root_cause_tags=[]; s.root_cause_log=[]; s.is_void_manual = s.is_void === 'TRUE' || s.is_void === true;
     s.attendance_log=[]; s.ptm_log=[]; s.referral_log=[]; s.scorecard_log=[];
   });
 
   (raw.Trainer_History || []).forEach(t => {
     const s = byId[t.student_id]; if(!s) return;
-    if(t.subject==='Math' && t.role==='Primary') s.math_trainer=t.trainer_name;
-    if(t.subject==='English' && t.role==='Primary') s.english_trainer=t.trainer_name;
+    s.trainer_history_log = s.trainer_history_log || [];
+    s.trainer_history_log.push(t);
+    // Current trainer = the open-ended row (no end_date) for that subject/role.
+    // Falls back to the most recently started one if somehow none are open.
+    const isCurrent = !t.end_date;
+    if(t.subject==='Math' && (t.role==='Primary' || t.role==='Primary (unverified)')){
+      if(isCurrent || !s.math_trainer) s.math_trainer=t.trainer_name;
+    }
+    if(t.subject==='English' && (t.role==='Primary' || t.role==='Primary (unverified)')){
+      if(isCurrent || !s.english_trainer) s.english_trainer=t.trainer_name;
+    }
     if(t.subject==='Math' && t.role==='Secondary') s.secondary_math_trainer=t.trainer_name;
     if(t.subject==='English' && t.role==='Secondary') s.secondary_english_trainer=t.trainer_name;
   });
@@ -283,6 +295,10 @@ function buildStudentView(raw){
   const attemptByStudent = {};
   (raw.Attempts || []).forEach(a => {
     const s = byId[a.student_id]; if(!s) return;
+    s.attempt_history = s.attempt_history || [];
+    s.attempt_history.push(a);
+    // Attempts append in chronological order (new ones always added at the bottom),
+    // so the LAST one for a student is always their most recent/current attempt.
     attemptByStudent[a.student_id] = a;
     s.attempt_id = a.attempt_id;
     s.attempt_type=a.attempt_type; s.test_month=a.test_month; s.target=a.target;
@@ -292,25 +308,52 @@ function buildStudentView(raw){
     s.achieved_source = a.achieved_source;
   });
 
-  (raw.Test_Scores || []).forEach(t => { const s=byId[t.student_id]; if(s) s.test_scores.push(Number(t.total_score)); });
-  (raw.Milestones || []).forEach(m => { const s=byId[m.student_id]; if(s) s.milestone_status=m.milestone_status; });
+  (raw.Test_Scores || []).forEach(t => { const s=byId[t.student_id]; if(s) s.test_scores.push(t); });
+  (raw.Milestones || []).forEach(m => { const s=byId[m.student_id]; if(s) s.milestone_log.push(m); });
   (raw.Weekly_Comments || []).forEach(c => { const s=byId[c.student_id]; if(s) s.weekly_comments.push(c); });
   (raw.Reattempt_Cycles || []).forEach(c => { const s=byId[c.student_id]; if(s) s.reattempt_cycles.push(c); });
   (raw.Class_Attendance || []).forEach(c => { const s=byId[c.student_id]; if(s) s.attendance_log.push(c); });
   (raw.PTM_Log || []).forEach(c => { const s=byId[c.student_id]; if(s) s.ptm_log.push(c); });
+
+  Object.values(byId).forEach(s => {
+    // Regularity: computed from Class_Attendance log, not manual entry.
+    const logged = s.attendance_log.length;
+    const cancelled = s.attendance_log.filter(a => a.status === 'Cancelled').length;
+    const rescheduled = s.attendance_log.filter(a => a.status === 'Rescheduled').length;
+    s.cancellation_pct = logged ? (cancelled / logged) : 0;
+    s.reschedule_count = rescheduled;
+    s.hw_completion_pct = logged ? (s.attendance_log.filter(a => a.hw_done === 'TRUE').length / logged) : null;
+    s.error_log_pct = logged ? (s.attendance_log.filter(a => a.error_log_filled === 'TRUE').length / logged) : null;
+    s.test_taken_pct = logged ? (s.attendance_log.filter(a => a.test_taken === 'TRUE').length / logged) : null;
+
+    // Void: manual flag OR computed from the actual >10% cancellation / >4 reschedule rules.
+    s.void_computed_reason = null;
+    if (logged >= 3 && s.cancellation_pct > 0.10) s.void_computed_reason = `${Math.round(s.cancellation_pct*100)}% classes cancelled (>10%)`;
+    else if (s.reschedule_count > 4) s.void_computed_reason = `${s.reschedule_count} reschedules (>4)`;
+    s.is_void_risk = s.is_void_manual || !!s.void_computed_reason;
+
+    // Milestone: most recent log entry is the current status.
+    s.milestone_log.sort((a,b) => new Date(a.milestone_date||0) - new Date(b.milestone_date||0));
+    s.milestone_status = s.milestone_log.length ? s.milestone_log[s.milestone_log.length-1].milestone_status : '';
+  });
   (raw.Referral_Log || []).forEach(c => { const s=byId[c.student_id]; if(s) s.referral_log.push(c); });
   (raw.Scorecards || []).forEach(c => { const s=byId[c.student_id]; if(s) s.scorecard_log.push(c); });
 
   (raw.Root_Cause_Analysis || []).forEach(r => {
     const s = Object.values(byId).find(x => attemptByStudent[x.student_id] && attemptByStudent[x.student_id].attempt_id === r.attempt_id);
-    if(s) s.root_cause_tags.push(r.category);
+    if(!s) return;
+    s.root_cause_tags.push(r.category);
+    s.root_cause_log.push(r);
   });
 
   return Object.values(byId);
 }
 
 function statusPill(s){
-  if(s.is_void_risk) return '<span class="pill red">Void risk</span>';
+  if(s.is_void_risk){
+    const why = s.void_computed_reason ? ` — ${s.void_computed_reason}` : (s.void_reason ? ` — ${s.void_reason}` : '');
+    return `<span class="pill red" title="${why.replace(/"/g,'')}">Void risk${why}</span>`;
+  }
   if(s.achieved === true) return '<span class="pill teal">Achieved</span>';
   if(s.achieved === false) return '<span class="pill amber">Not achieved</span>';
   return '<span class="pill slate">Unresolved</span>';
@@ -340,6 +383,37 @@ function buildStatStrip(){
   ].map(([l,n,c]) => `<div class="stat ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('coverageNote').innerHTML =
     total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no clear achieved/not-achieved signal yet.` : '';
+  buildRootCauseOverview();
+}
+
+// For Rajgeetha: of the students who did NOT hit their target, why not - broken down
+// live from actual Root_Cause_Analysis entries, not guessed.
+function buildRootCauseOverview(){
+  const notAchieved = STUDENTS.filter(s => s.achieved === false);
+  const tagged = notAchieved.filter(s => s.root_cause_tags && s.root_cause_tags.length);
+  const el = document.getElementById('rootCauseOverview');
+  if(notAchieved.length === 0){
+    el.innerHTML = '';
+    return;
+  }
+  const counts = {};
+  tagged.forEach(s => s.root_cause_tags.forEach(t => { counts[t] = (counts[t]||0) + 1; }));
+  const totalTags = Object.values(counts).reduce((a,b) => a+b, 0);
+  const untagged = notAchieved.length - tagged.length;
+  const rows = Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([cat,n]) => {
+    const pct = Math.round((n/notAchieved.length)*100);
+    return `<div style="margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; font-size:12.5px; color:var(--ink-soft); margin-bottom:3px;"><span>${cat}</span><span>${n} (${pct}%)</span></div>
+      <div style="background:var(--slate-bg); border-radius:4px; height:7px; overflow:hidden;"><div style="width:${pct}%; height:100%; background:var(--violet);"></div></div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel); max-width:760px;">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
+      <span style="font-size:13.5px; font-weight:600;">Why students didn't hit target — ${notAchieved.length} not-achieved</span>
+      <span class="sub2">${untagged} not yet tagged</span>
+    </div>
+    ${rows || '<div class="placeholder-box">No root causes tagged yet - log one from a student\'s panel (+ Log Entry → Root Cause).</div>'}
+  </div>`;
 }
 
 function buildTrainerOptions(){
@@ -400,17 +474,38 @@ function render(){
 
 // ---------- STUDENT DETAIL PANEL (read-only, viewing only) ----------
 function openPanel(s){
-  const scores = (s.test_scores||[]).map(v => `<span class="score-chip">${Math.round(v)}</span>`).join('');
+  const testScoresSorted = (s.test_scores||[]).slice().sort((a,b) => new Date(a.entered_at||0) - new Date(b.entered_at||0));
+  const scores = testScoresSorted.map(t => {
+    const total = t.total_score || (Number(t.math_score||0) + Number(t.english_score||0)) || '';
+    const parts = [t.math_score ? 'M:'+t.math_score : null, t.english_score ? 'E:'+t.english_score : null].filter(Boolean).join(' ');
+    return `<span class="score-chip" title="${t.test_label||''}">${t.test_label||'Test'}: ${total}${parts?' ('+parts+')':''}</span>`;
+  }).join('');
   const commentsHtml = (s.weekly_comments||[]).map(c => `<div class="comment-item"><div class="role">${c.commenter_role}</div><div class="txt">${c.comment_text}</div>${c.entered_by?'<div class="meta">— '+c.entered_by+'</div>':''}</div>`).join('');
   const cyclesHtml = (s.reattempt_cycles||[]).map(c => `<div class="cycle-card">
       <div class="hd"><span>${c.source_tracker} tracker &middot; ${c.test_month||'—'} → ${c.reattempt_month||'—'}</span></div>
       <div class="row"><b>Trainers:</b> ${c.math_teacher||'—'} / ${c.english_teacher||'—'}</div>
       <div class="row"><b>DS → AS:</b> ${c.diagnostic_score||'—'} → ${c.attempt_score||'—'}</div>
       ${c.comments?'<div class="row">'+c.comments+'</div>':''}</div>`).join('');
-  const attendanceHtml = (s.attendance_log||[]).slice().reverse().map(a =>
-    `<div class="comment-item"><div class="txt">${a.class_date} &middot; ${a.subject} &middot; <b>${a.status}</b>${a.cancellation_reason?' — '+a.cancellation_reason:''}</div><div class="meta">— ${a.entered_by||''}</div></div>`).join('');
+  const attendanceHtml = (s.attendance_log||[]).slice().reverse().map(a => {
+    const chips = [
+      a.hw_done==='TRUE' ? 'HW done' : (a.hw_done==='FALSE' ? 'HW missed' : null),
+      a.error_log_filled==='TRUE' ? 'Error log filled' : (a.error_log_filled==='FALSE' ? 'Error log missed' : null),
+      a.test_taken==='TRUE' ? 'Test taken' : (a.test_taken==='FALSE' ? 'Test not taken' : null),
+    ].filter(Boolean).join(' &middot; ');
+    return `<div class="comment-item"><div class="txt">${a.class_date} &middot; ${a.subject} &middot; <b>${a.status}</b>${a.cancellation_reason?' — '+a.cancellation_reason:''}</div>${chips?'<div class="meta">'+chips+'</div>':''}<div class="meta">— ${a.entered_by||''}</div></div>`;
+  }).join('');
+  const milestoneHtml = (s.milestone_log||[]).slice().reverse().map(m =>
+    `<div class="comment-item"><div class="txt">${(m.milestone_date||'').toString().slice(0,10)} — ${m.milestone_status}</div><div class="meta">— ${m.entered_by||''}</div></div>`).join('');
+  const trainerHistoryHtml = (s.trainer_history_log||[]).slice().reverse().map(t =>
+    `<div class="comment-item"><div class="txt">${t.subject} — <b>${t.trainer_name}</b>${!t.end_date?' <span class="pill teal">Current</span>':''}</div><div class="meta">${t.start_date?t.start_date.toString().slice(0,10):'—'} → ${t.end_date?t.end_date.toString().slice(0,10):'present'}${t.reason?' — '+t.reason:''}</div></div>`).join('');
+  const attemptHistoryHtml = (s.attempt_history||[]).slice().reverse().map(a =>
+    `<div class="comment-item"><div class="txt">${a.attempt_type||'—'}${a.test_month?' — '+a.test_month:''} — target ${a.target||'—'}</div><div class="meta">Diag ${a.diagnostic_score||'—'} → Score ${a.attempt_score||'—'} — ${a.achieved==='TRUE'?'Achieved':(a.achieved==='FALSE'?'Not achieved':'Pending')}</div></div>`).join('');
   const ptmHtml = (s.ptm_log||[]).slice().reverse().map(p =>
     `<div class="comment-item"><div class="txt">${p.ptm_date} — ${p.notes||'(no notes)'}</div><div class="meta">— ${p.conducted_by||p.entered_by||''}, next due ${p.next_due_date||''}</div></div>`).join('');
+  const referralHtml = (s.referral_log||[]).slice().reverse().map(r =>
+    `<div class="comment-item"><div class="txt">${r.type}${r.referred_by?' — referred by '+r.referred_by:''}${r.non_stp_to_stp==='TRUE'?' <span class=\"pill violet\">Non-SGP→SGP</span>':''}</div><div class="meta">${(r.event_date||'').toString().slice(0,10)} — ${r.entered_by||''}</div></div>`).join('');
+  const scorecardHtml = (s.scorecard_log||[]).slice().reverse().map(c =>
+    `<div class="comment-item"><div class="txt">${c.collected==='TRUE'?'Collected':'Not collected'}${c.reported_score?' — score '+c.reported_score:''}</div><div class="meta">${(c.date_collected||'').toString().slice(0,10)} — ${c.entered_by||''}</div></div>`).join('');
 
   document.getElementById('panel').innerHTML = `
     <div class="panel-actions">
@@ -429,14 +524,19 @@ function openPanel(s){
       <div class="field"><div class="k">Milestone</div><div class="v">${s.milestone_status||'—'}</div></div>
     </div>
 
-    <div class="section-title">Root cause</div>
-    ${s.real_root_cause_notes ? `<div class="placeholder-box" style="border-style:solid; border-color:var(--teal); background:var(--teal-bg); color:var(--ink);">
-      <b>Human-verified (SSM/PL):</b> ${s.real_root_cause_status ? s.real_root_cause_status + ' — ' : ''}${s.real_root_cause_notes}
-    </div>` : ''}
-    <div style="margin-top:6px;">${rootCauseTags(s) || (s.real_root_cause_notes ? '' : '<span class="sub2">Not applicable.</span>')}</div>
+    <div class="section-title">Root cause <span class="sub2">${(s.root_cause_log||[]).length} logged</span></div>
+    <div style="margin-bottom:8px;">${rootCauseTags(s) || '<span class="sub2">Not applicable.</span>'}</div>
+    ${(s.root_cause_log||[]).length ? `<div class="comment-list">${(s.root_cause_log||[]).slice().reverse().map(r =>
+      `<div class="comment-item"><div class="role">${r.category}</div><div class="txt">${r.detail_notes||'(no detail added)'}</div><div class="meta">— ${r.tagged_by||''}</div></div>`).join('')}</div>` : ''}
 
     <div class="section-title">Test score history</div>
     <div class="score-row">${scores || '<span class="sub2">No test scores yet.</span>'}</div>
+
+    <div class="section-title">Trainer history <span class="sub2">${(s.trainer_history_log||[]).length} logged</span></div>
+    ${trainerHistoryHtml ? `<div class="comment-list">${trainerHistoryHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+
+    <div class="section-title">Attempt history <span class="sub2">${(s.attempt_history||[]).length} logged</span></div>
+    ${attemptHistoryHtml ? `<div class="comment-list">${attemptHistoryHtml}</div>` : '<div class="placeholder-box">Only the latest attempt is shown above - log more via + Log Entry → Attempt.</div>'}
 
     <div class="section-title">Reattempt cycles <span class="sub2">${(s.reattempt_cycles||[]).length} logged</span></div>
     ${(s.reattempt_cycles||[]).length ? cyclesHtml : '<div class="placeholder-box">None logged.</div>'}
@@ -444,11 +544,29 @@ function openPanel(s){
     <div class="section-title">Weekly comments <span class="sub2">${(s.weekly_comments||[]).length} logged</span></div>
     ${commentsHtml ? `<div class="comment-list">${commentsHtml}</div>` : '<div class="placeholder-box">None yet.</div>'}
 
+    <div class="section-title">Regularity ${(s.attendance_log||[]).length ? '<span class="sub2">'+(s.attendance_log||[]).length+' classes logged</span>' : ''}</div>
+    ${(s.attendance_log||[]).length ? `
+    <div class="field-grid" style="margin-bottom:10px;">
+      <div class="field"><div class="k">Cancellation rate</div><div class="v">${Math.round(s.cancellation_pct*100)}%${s.cancellation_pct>0.10?' <span class="pill red">over 10%</span>':''}</div></div>
+      <div class="field"><div class="k">Reschedules</div><div class="v">${s.reschedule_count}${s.reschedule_count>4?' <span class="pill red">over 4</span>':''}</div></div>
+      <div class="field"><div class="k">HW completion</div><div class="v">${s.hw_completion_pct!=null?Math.round(s.hw_completion_pct*100)+'%':'—'}</div></div>
+      <div class="field"><div class="k">Error log filled</div><div class="v">${s.error_log_pct!=null?Math.round(s.error_log_pct*100)+'%':'—'}</div></div>
+    </div>` : '<div class="placeholder-box">No classes logged yet — void status will compute automatically once attendance is logged.</div>'}
+
     <div class="section-title">Class attendance <span class="sub2">${(s.attendance_log||[]).length} logged</span></div>
     ${attendanceHtml ? `<div class="comment-list">${attendanceHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
 
+    <div class="section-title">Milestone history <span class="sub2">${(s.milestone_log||[]).length} logged</span></div>
+    ${milestoneHtml ? `<div class="comment-list">${milestoneHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+
     <div class="section-title">PTM log <span class="sub2">${(s.ptm_log||[]).length} logged</span></div>
     ${ptmHtml ? `<div class="comment-list">${ptmHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+
+    <div class="section-title">Referrals <span class="sub2">${(s.referral_log||[]).length} logged</span></div>
+    ${referralHtml ? `<div class="comment-list">${referralHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
+
+    <div class="section-title">Scorecard <span class="sub2">${(s.scorecard_log||[]).length} logged</span></div>
+    ${scorecardHtml ? `<div class="comment-list">${scorecardHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
   `;
   document.getElementById('overlay').classList.add('open');
 }
@@ -516,6 +634,13 @@ function renderLogModal(){
       <div class="entry-type-opt ${logEntryType==='attendance'?'active':''}" onclick="setLogEntryType('attendance')">Attendance</div>
       <div class="entry-type-opt ${logEntryType==='ptm'?'active':''}" onclick="setLogEntryType('ptm')">PTM</div>
       <div class="entry-type-opt ${logEntryType==='newstudent'?'active':''}" onclick="setLogEntryType('newstudent')">New Student</div>
+      <div class="entry-type-opt ${logEntryType==='milestone'?'active':''}" onclick="setLogEntryType('milestone')">Milestone</div>
+      <div class="entry-type-opt ${logEntryType==='referral'?'active':''}" onclick="setLogEntryType('referral')">Referral</div>
+      <div class="entry-type-opt ${logEntryType==='scorecard'?'active':''}" onclick="setLogEntryType('scorecard')">Scorecard</div>
+      <div class="entry-type-opt ${logEntryType==='rootcause'?'active':''}" onclick="setLogEntryType('rootcause')">Root Cause</div>
+      <div class="entry-type-opt ${logEntryType==='testscore'?'active':''}" onclick="setLogEntryType('testscore')">Test Score</div>
+      <div class="entry-type-opt ${logEntryType==='attempt'?'active':''}" onclick="setLogEntryType('attempt')">Attempt</div>
+      <div class="entry-type-opt ${logEntryType==='trainerchange'?'active':''}" onclick="setLogEntryType('trainerchange')">Trainer Change</div>
     </div>
 
     <div id="logFormFields">${renderLogFormFields()}</div>
@@ -562,8 +687,83 @@ function renderLogFormFields(){
     return `
       <label>Date</label><input type="date" id="f_date">
       <label>Subject</label><select id="f_subject"><option>Math</option><option>English</option></select>
-      <label>Status</label><select id="f_status"><option>Held</option><option>Cancelled</option></select>
-      <label>Reason (if cancelled)</label><input type="text" id="f_reason" placeholder="Optional">`;
+      <label>Status</label><select id="f_status"><option>Held</option><option>Cancelled</option><option>Rescheduled</option></select>
+      <label>Reason (if cancelled/rescheduled)</label><input type="text" id="f_reason" placeholder="Optional">
+      <label style="margin-top:10px;">Regularity checklist for this class</label>
+      <label class="checkbox-line"><input type="checkbox" id="f_hwdone"> Homework completed</label>
+      <label class="checkbox-line"><input type="checkbox" id="f_errorlog"> Error log filled</label>
+      <label class="checkbox-line"><input type="checkbox" id="f_testtaken"> Test taken</label>`;
+  }
+  if(logEntryType === 'milestone'){
+    return `
+      <label>Date</label><input type="date" id="f_msdate">
+      <label>Milestone status</label>
+      <select id="f_msstatus">
+        <option>200+ improvement achieved</option>
+        <option>1500+ achieved</option>
+        <option>On track - consistent improvement</option>
+        <option>Not on track - inconsistent scores</option>
+        <option>Not eligible for attempt yet</option>
+        <option>Custom (type below)</option>
+      </select>
+      <input type="text" id="f_mscustom" placeholder="Custom milestone note (only if 'Custom' selected)" style="margin-top:6px;">`;
+  }
+  if(logEntryType === 'referral'){
+    return `
+      <label>Referral type</label>
+      <select id="f_reftype"><option>New student referred</option><option>Re-enrollment</option><option>Non-SGP to SGP upgrade</option></select>
+      <label>Referred by (this student's name, if they referred someone)</label><input type="text" id="f_refby" placeholder="Optional">
+      <label class="checkbox-line"><input type="checkbox" id="f_nonsgptosgp"> This is a Non-SGP → SGP upgrade</label>
+      <label>Date</label><input type="date" id="f_refdate">`;
+  }
+  if(logEntryType === 'scorecard'){
+    return `
+      <label class="checkbox-line"><input type="checkbox" id="f_sccollected"> Scorecard collected</label>
+      <label>Date collected</label><input type="date" id="f_scdate">
+      <label>Reported score</label><input type="text" id="f_scscore" placeholder="e.g. 1540">`;
+  }
+  if(logEntryType === 'rootcause'){
+    return `
+      <label>Category</label>
+      <select id="f_rccategory"><option>Student caliber</option><option>Attendance / regularity</option><option>Test not taken seriously</option><option>Academic pressure / test anxiety</option><option>Ops - could have postponed/voided</option><option>Other</option></select>
+      <label>Detail notes</label><textarea id="f_rcnotes" placeholder="What specifically happened, from your assessment"></textarea>`;
+  }
+  if(logEntryType === 'testscore'){
+    return `
+      <label>Test</label>
+      <select id="f_tslabel">
+        <option>Diagnostic</option>
+        <option>Test 1</option><option>Test 2</option><option>Test 3</option><option>Test 4</option>
+        <option>Test 5</option><option>Test 6</option><option>Test 7</option><option>Test 8</option>
+        <option>Test 9</option><option>Test 10</option><option>Test 11</option><option>Test 12</option>
+        <option>Test 13</option><option>Test 14</option><option>Test 15</option><option>Test 16</option>
+        <option>Actual attempt score</option>
+      </select>
+      <div class="entry-form-row" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Math score</label><input type="number" id="f_tsmath" placeholder="e.g. 680"></div>
+        <div style="flex:1;"><label>Verbal/English score</label><input type="number" id="f_tsenglish" placeholder="e.g. 640"></div>
+      </div>
+      <label>Total (auto-fills from Math+Verbal if left blank)</label><input type="number" id="f_tstotal" placeholder="e.g. 1320">`;
+  }
+  if(logEntryType === 'attempt'){
+    return `
+      <label>Attempt type</label>
+      <select id="f_atype"><option>Trial</option><option>First</option><option>Second</option><option>Reattempt</option></select>
+      <label>Test month</label><input type="text" id="f_atmonth" placeholder="e.g. AUG or September 2026">
+      <label>Target</label><input type="text" id="f_attarget" placeholder="e.g. 1500+ or 200 point">
+      <div class="entry-form-row" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Diagnostic Math</label><input type="number" id="f_atdiagmath"></div>
+        <div style="flex:1;"><label>Diagnostic English</label><input type="number" id="f_atdiageng"></div>
+      </div>
+      <label>Attempt score (total)</label><input type="number" id="f_atscore" placeholder="Leave blank if attempt hasn't happened yet">
+      <label>Achieved target?</label><select id="f_atachieved"><option value="">Not yet known</option><option>Yes</option><option>No</option></select>`;
+  }
+  if(logEntryType === 'trainerchange'){
+    return `
+      <label>Subject</label><select id="f_tcsubject"><option>Math</option><option>English</option></select>
+      <label>New trainer name</label><input type="text" id="f_tcname" placeholder="Full name">
+      <label>Reason for change</label><input type="text" id="f_tcreason" placeholder="e.g. Trainer left, workload rebalance">
+      <div class="placeholder-box" style="margin-top:6px;">The previous trainer's assignment is kept, not erased - it gets an end date so the new trainer can see who taught this student before and how they were performing.</div>`;
   }
   if(logEntryType === 'ptm'){
     return `
@@ -645,12 +845,74 @@ async function submitLogEntry(){
       payload.status = document.getElementById('f_status').value;
       payload.cancellation_reason = document.getElementById('f_reason').value.trim();
       payload.cancelled_by = payload.status === 'Cancelled' ? 'Student' : '';
+      payload.hw_done = document.getElementById('f_hwdone').checked;
+      payload.error_log_filled = document.getElementById('f_errorlog').checked;
+      payload.test_taken = document.getElementById('f_testtaken').checked;
       if(!payload.class_date) throw new Error('Pick a date.');
+    } else if(logEntryType === 'milestone'){
+      payload.action = 'log_milestone';
+      payload.milestone_date = document.getElementById('f_msdate').value;
+      const sel = document.getElementById('f_msstatus').value;
+      const custom = document.getElementById('f_mscustom').value.trim();
+      payload.milestone_status = sel === 'Custom (type below)' ? custom : sel;
+      if(!payload.milestone_date) throw new Error('Pick a date.');
+      if(!payload.milestone_status) throw new Error('Enter a milestone status.');
     } else if(logEntryType === 'ptm'){
       payload.action = 'log_ptm';
       payload.ptm_date = document.getElementById('f_ptmdate').value;
       payload.notes = document.getElementById('f_notes').value.trim();
       if(!payload.ptm_date) throw new Error('Pick a date.');
+    } else if(logEntryType === 'referral'){
+      payload.action = 'log_referral';
+      payload.type = document.getElementById('f_reftype').value;
+      payload.referred_by = document.getElementById('f_refby').value.trim();
+      payload.non_stp_to_stp = document.getElementById('f_nonsgptosgp').checked;
+      payload.event_date = document.getElementById('f_refdate').value;
+    } else if(logEntryType === 'scorecard'){
+      payload.action = 'log_scorecard';
+      payload.collected = document.getElementById('f_sccollected').checked;
+      payload.date_collected = document.getElementById('f_scdate').value;
+      payload.reported_score = document.getElementById('f_scscore').value.trim();
+    } else if(logEntryType === 'rootcause'){
+      payload.action = 'log_root_cause';
+      const fullStudent = STUDENTS.find(x => x.student_id === logPickedStudent.id);
+      payload.attempt_id = fullStudent ? (fullStudent.attempt_id || '') : '';
+      payload.category = document.getElementById('f_rccategory').value;
+      payload.detail_notes = document.getElementById('f_rcnotes').value.trim();
+      if(!payload.detail_notes) throw new Error('Add a detail note.');
+      if(!payload.attempt_id) throw new Error('This student has no attempt on record yet - log an Attempt first.');
+    } else if(logEntryType === 'testscore'){
+      payload.action = 'log_test_score';
+      const fs2 = STUDENTS.find(x => x.student_id === logPickedStudent.id);
+      payload.attempt_id = fs2 ? (fs2.attempt_id || '') : '';
+      payload.test_label = document.getElementById('f_tslabel').value;
+      payload.math_score = document.getElementById('f_tsmath').value;
+      payload.english_score = document.getElementById('f_tsenglish').value;
+      let total = document.getElementById('f_tstotal').value;
+      if(!total && (payload.math_score || payload.english_score)){
+        total = (Number(payload.math_score||0) + Number(payload.english_score||0)) || '';
+      }
+      payload.total_score = total;
+      if(!payload.math_score && !payload.english_score && !total) throw new Error('Enter at least one score.');
+    } else if(logEntryType === 'attempt'){
+      payload.action = 'log_attempt';
+      payload.attempt_type = document.getElementById('f_atype').value;
+      payload.test_month = document.getElementById('f_atmonth').value.trim();
+      payload.target = document.getElementById('f_attarget').value.trim();
+      payload.target_numeric = (payload.target.match(/\d+/)||[])[0] || '';
+      payload.diagnostic_math = document.getElementById('f_atdiagmath').value;
+      payload.diagnostic_english = document.getElementById('f_atdiageng').value;
+      if(payload.diagnostic_math || payload.diagnostic_english){
+        payload.diagnostic_score = (Number(payload.diagnostic_math||0) + Number(payload.diagnostic_english||0)) || '';
+      }
+      payload.attempt_score = document.getElementById('f_atscore').value;
+      payload.achieved = document.getElementById('f_atachieved').value;
+    } else if(logEntryType === 'trainerchange'){
+      payload.action = 'log_trainer_change';
+      payload.subject = document.getElementById('f_tcsubject').value;
+      payload.trainer_name = document.getElementById('f_tcname').value.trim();
+      payload.reason = document.getElementById('f_tcreason').value.trim();
+      if(!payload.trainer_name) throw new Error('Enter the new trainer\'s name.');
     }
     await postAction(payload);
     document.getElementById('logSaveStatus').className = 'save-status ok';
