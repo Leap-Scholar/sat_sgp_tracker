@@ -174,6 +174,7 @@
   <div class="stat-strip" id="statStrip"></div>
   <div class="coverage-note" id="coverageNote"></div>
   <div id="rootCauseOverview" style="margin-top:14px;"></div>
+  <div id="operationalRollups" style="margin-top:14px;"></div>
 </div>
 
 <div class="tabs" id="tabs"></div>
@@ -181,6 +182,7 @@
   <div class="view-toggle" id="viewToggle">
     <div class="view-opt active" data-mode="overview">Overview</div>
     <div class="view-opt" data-mode="detail">Detail</div>
+    <div class="view-opt" data-mode="insights">Insights</div>
   </div>
 </div>
 
@@ -196,6 +198,7 @@
   <tbody id="tableBody"></tbody>
 </table>
 <div class="empty" id="emptyState" style="display:none;">No students match this view.</div>
+<div id="insightsRoot" style="display:none;"></div>
 
 <div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
 
@@ -221,7 +224,7 @@ const TABS = [
   { key: 'achieved', label: 'Goal achieved', filter: s => s.achieved === true },
   { key: 'not_achieved', label: 'Not achieved / at risk', filter: s => s.achieved === false },
   { key: 'void_risk', label: 'Void risk', filter: s => s.is_void_risk },
-  { key: 'unresolved', label: 'Status unresolved', filter: s => s.achieved === null },
+  { key: 'unresolved', label: 'Outcome pending', filter: s => s.achieved === null },
 ];
 
 // ---------- API URL ----------
@@ -327,9 +330,13 @@ function buildStudentView(raw){
     s.test_taken_pct = logged ? (s.attendance_log.filter(a => a.test_taken === 'TRUE').length / logged) : null;
 
     // Void: manual flag OR computed from the actual >10% cancellation / >4 reschedule rules.
+    // Score-guarantee void only applies to SGP students - Non-SGP has no such guarantee,
+    // so the computed check is scoped to course_type === 'SGP'. A manual is_void flag still
+    // works for either, in case Ops needs to void a Non-SGP student for another reason.
+    const isSGP = (s.course_type || '').trim().toUpperCase() === 'SGP';
     s.void_computed_reason = null;
-    if (logged >= 3 && s.cancellation_pct > 0.10) s.void_computed_reason = `${Math.round(s.cancellation_pct*100)}% classes cancelled (>10%)`;
-    else if (s.reschedule_count > 4) s.void_computed_reason = `${s.reschedule_count} reschedules (>4)`;
+    if (isSGP && logged >= 3 && s.cancellation_pct > 0.10) s.void_computed_reason = `${Math.round(s.cancellation_pct*100)}% classes cancelled (>10%)`;
+    else if (isSGP && s.reschedule_count > 4) s.void_computed_reason = `${s.reschedule_count} reschedules (>4)`;
     s.is_void_risk = s.is_void_manual || !!s.void_computed_reason;
 
     // Milestone: most recent log entry is the current status.
@@ -356,7 +363,7 @@ function statusPill(s){
   }
   if(s.achieved === true) return '<span class="pill teal">Achieved</span>';
   if(s.achieved === false) return '<span class="pill amber">Not achieved</span>';
-  return '<span class="pill slate">Unresolved</span>';
+  return '<span class="pill slate">Outcome pending</span>';
 }
 function rootCauseTags(s){
   if(!s.root_cause_tags || !s.root_cause_tags.length) return s.achieved === false ? '<span class="pill slate">Unclassified</span>' : '';
@@ -378,12 +385,13 @@ function buildStatStrip(){
         notAchieved=STUDENTS.filter(s=>s.achieved===false).length, voidRisk=STUDENTS.filter(s=>s.is_void_risk).length,
         unresolved=STUDENTS.filter(s=>s.achieved===null).length;
   document.getElementById('statStrip').innerHTML = [
-    ['Total SGP students',total,'c-total'],['Goal achieved',achieved,'c-achieved'],['Not achieved',notAchieved,'c-notachieved'],
-    ['Void risk',voidRisk,'c-void'],['Status unresolved',unresolved,'c-unresolved'],
+    ['Total students',total,'c-total'],['Goal achieved',achieved,'c-achieved'],['Not achieved',notAchieved,'c-notachieved'],
+    ['Void risk',voidRisk,'c-void'],['Outcome pending',unresolved,'c-unresolved'],
   ].map(([l,n,c]) => `<div class="stat ${c}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('coverageNote').innerHTML =
-    total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no clear achieved/not-achieved signal yet.` : '';
+    total ? `${unresolved} of ${total} students (${Math.round(unresolved/total*100)}%) have no attempt logged yet, or an attempt with no outcome marked - not necessarily untested, just not yet recorded.` : '';
   buildRootCauseOverview();
+  buildOperationalRollups();
 }
 
 // For Rajgeetha: of the students who did NOT hit their target, why not - broken down
@@ -414,6 +422,51 @@ function buildRootCauseOverview(){
     </div>
     ${rows || '<div class="placeholder-box">No root causes tagged yet - log one from a student\'s panel (+ Log Entry → Root Cause).</div>'}
   </div>`;
+}
+
+// Referral count, scorecard collection rate, PTM-overdue list - real operational
+// rollups, not per-student digging.
+function buildOperationalRollups(){
+  const today = new Date();
+  const totalReferrals = STUDENTS.reduce((sum,s) => sum + (s.referral_log||[]).length, 0);
+  const nonSgpToSgp = STUDENTS.reduce((sum,s) => sum + (s.referral_log||[]).filter(r => r.non_stp_to_stp==='TRUE').length, 0);
+
+  const withScorecardEntry = STUDENTS.filter(s => (s.scorecard_log||[]).length > 0);
+  const collected = withScorecardEntry.filter(s => (s.scorecard_log||[]).some(c => c.collected==='TRUE'));
+  const scorecardPct = withScorecardEntry.length ? Math.round(collected.length / withScorecardEntry.length * 100) : null;
+
+  const overdue = STUDENTS.filter(s => {
+    const ptms = (s.ptm_log||[]).slice().sort((a,b) => new Date(a.ptm_date||0) - new Date(b.ptm_date||0));
+    if(ptms.length){
+      const last = ptms[ptms.length-1];
+      return last.next_due_date && new Date(last.next_due_date) < today;
+    }
+    if(s.batch_start_date){
+      const start = new Date(s.batch_start_date);
+      return !isNaN(start) && (today - start) / 86400000 > 14;
+    }
+    return false;
+  });
+
+  document.getElementById('operationalRollups').innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px;">
+      <div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:4px;">Referrals logged</div>
+        <div style="font-size:22px; font-weight:600;">${totalReferrals}</div>
+        <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${nonSgpToSgp} Non-SGP -> SGP upgrades</div>
+      </div>
+      <div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:4px;">Scorecards collected</div>
+        <div style="font-size:22px; font-weight:600;">${scorecardPct!==null ? scorecardPct+'%' : '\u2014'}</div>
+        <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${withScorecardEntry.length ? 'of '+withScorecardEntry.length+' with an entry' : 'none logged yet'}</div>
+      </div>
+      <div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:${overdue.length ? 'var(--red-bg,#FCEBEB)' : 'var(--panel)'};">
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:4px;">PTM overdue</div>
+        <div style="font-size:22px; font-weight:600; ${overdue.length ? 'color:var(--red,#B42318);' : ''}">${overdue.length}</div>
+        <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${overdue.length ? overdue.slice(0,3).map(s=>s.name).join(', ') + (overdue.length>3?` +${overdue.length-3} more`:'') : 'none overdue'}</div>
+      </div>
+    </div>
+  `;
 }
 
 function buildTrainerOptions(){
@@ -465,11 +518,70 @@ function render(){
   buildTabs(); renderHead();
   const list = currentList();
   const body=document.getElementById('tableBody'), table=document.getElementById('tableRoot'), empty=document.getElementById('emptyState');
+  const insightsRoot = document.getElementById('insightsRoot');
+  const toolbar = document.querySelector('.toolbar');
+
+  if(viewMode === 'insights'){
+    table.style.display='none'; empty.style.display='none'; toolbar.style.display='none';
+    insightsRoot.style.display='block';
+    document.getElementById('resultMeta').textContent = '';
+    renderInsights(list);
+    return;
+  }
+  toolbar.style.display='flex'; insightsRoot.style.display='none';
+
   document.getElementById('resultMeta').textContent = `${list.length} student${list.length===1?'':'s'}`;
   if(list.length===0){ table.style.display='none'; empty.style.display='block'; return; }
   table.style.display='table'; empty.style.display='none';
   body.innerHTML = list.map(renderRow).join('');
   [...body.querySelectorAll('tr')].forEach(row => row.addEventListener('click', () => openPanel(STUDENTS.find(s=>s.student_id===row.dataset.id))));
+}
+
+// Breakdowns: course type (SGP/Non-SGP), test month, Math trainer, English trainer -
+// each computed live from whatever tab/search/trainer filter is currently active,
+// so "Insights" always reflects the same slice of students you're already looking at.
+function renderInsights(list){
+  function groupBy(items, keyFn){
+    const g = {};
+    items.forEach(it => {
+      const k = keyFn(it) || '—';
+      (g[k] = g[k] || []).push(it);
+    });
+    return g;
+  }
+  function achievedRate(items){
+    const known = items.filter(s => s.achieved !== null);
+    if(!known.length) return null;
+    return Math.round(known.filter(s => s.achieved === true).length / known.length * 100);
+  }
+  function card(title, groups, opts){
+    opts = opts || {};
+    const rows = Object.entries(groups).sort((a,b) => b[1].length - a[1].length).map(([label, items]) => {
+      const rate = achievedRate(items);
+      return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line-soft, #EFEEE9); font-size:13px;">
+        <span>${label}</span>
+        <span style="color:var(--ink-soft); font-size:12.5px;">${items.length} student${items.length===1?'':'s'}${rate!==null?' &middot; '+rate+'% achieved':''}</span>
+      </div>`;
+    }).join('');
+    return `<div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--panel);">
+      <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">${title}</div>
+      ${rows || '<div class="placeholder-box">No data yet.</div>'}
+    </div>`;
+  }
+
+  const byCourse = groupBy(list, s => s.course_type);
+  const byMonth = groupBy(list.filter(s => s.test_month), s => s.test_month);
+  const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer);
+  const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer);
+
+  document.getElementById('insightsRoot').innerHTML = `
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px;">
+      ${card('SGP vs Non-SGP', byCourse)}
+      ${card('By test month', byMonth)}
+      ${card('By Math trainer', byMathTrainer)}
+      ${card('By English trainer', byEnglishTrainer)}
+    </div>
+  `;
 }
 
 // ---------- STUDENT DETAIL PANEL (read-only, viewing only) ----------
