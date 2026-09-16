@@ -241,7 +241,10 @@ const TABS = [
 ];
 
 // ---------- API URL ----------
-function getApiUrl(){ return localStorage.getItem('sgp_api_url') || ''; }
+// Hardcoded so the dashboard works for anyone who opens the link, not just this browser.
+// PASTE YOUR DEPLOYED APPS SCRIPT WEB APP URL BELOW (ends in /exec).
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzW_VG-7f8XTUWo_K3LHfC0oWIYYuhu2zNwGIlUEUSnjsLn9BRi5IGX1MXkMMdUAd78/exec';
+function getApiUrl(){ return localStorage.getItem('sgp_api_url') || DEFAULT_API_URL; }
 function saveApiUrl(){
   const val = document.getElementById('apiUrlInput').value.trim();
   if(!val) return;
