@@ -267,8 +267,21 @@ async function refreshData(){
   document.getElementById('loadingState').style.display = 'block';
   document.getElementById('tableRoot').style.display = 'none';
   try{
-    const res = await fetch(url);
-    const json = await res.json();
+    // cache:'no-store' so a stale cached response (e.g. from before the deployment
+    // was fixed) can never get served back silently - always hits Google fresh.
+    const res = await fetch(url, { cache: 'no-store' });
+    const bodyText = await res.text();
+    let json;
+    try{
+      json = JSON.parse(bodyText);
+    } catch(parseErr){
+      const looksLikeHtml = bodyText.trim().startsWith('<');
+      throw new Error(
+        looksLikeHtml
+          ? `Got an HTML page back instead of data (starts with "${bodyText.trim().slice(0,40)}..."). This usually means the Apps Script deployment needs a fresh "New version" deploy, or the URL is wrong/expired.`
+          : `Response wasn't valid JSON: "${bodyText.trim().slice(0,80)}"`
+      );
+    }
     if(json.error) throw new Error(json.error);
     RAW = json;
     STUDENTS = buildStudentView(RAW);
