@@ -399,10 +399,10 @@ function buildWhySummary(s){
 
   // Achievement / score gap
   if(s.achieved === false){
-    const gapNote = (s.target_numeric && s.latest_score) ? ` (target ${s.target}, scored ${s.latest_score})` : '';
+    const gapNote = (s.target_numeric && s.latest_score) ? ` (target ${fmtTarget(s)}, scored ${s.latest_score})` : '';
     bits.push(`<b>Not achieved</b>${gapNote}.`);
   } else if(s.achieved === true){
-    bits.push(`<b>Achieved</b> target${s.target?' of '+s.target:''}.`);
+    bits.push(`<b>Achieved</b> target${s.target?' of '+fmtTarget(s):''}.`);
   } else {
     bits.push(`<b>Outcome not yet known</b> — no attempt result logged.`);
   }
@@ -471,6 +471,14 @@ function rootCauseTags(s){
   return s.root_cause_tags.map(t => `<span class="pill violet">${t}</span>`).join('');
 }
 function fmtScore(v){ if(v===null||v===undefined||v===''||isNaN(v)) return '—'; return Math.round(v); }
+// A raw "200" and a raw "1500+" mean completely different things - one's a required
+// point JUMP, the other is an absolute score to hit. Never show the bare number alone.
+function fmtTarget(s){
+  if(!s.target) return '—';
+  const n = Number(s.target_numeric);
+  if(!n) return s.target;
+  return n >= 1000 ? `Score ${s.target}` : `+${n} pt improvement`;
+}
 
 function buildTabs(){
   const el = document.getElementById('tabs');
@@ -687,7 +695,7 @@ function renderRow(s){
     return `<tr data-id="${s.student_id}">
       <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
       <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
-      <td class="num">${s.target||'—'}</td>
+      <td class="num">${fmtTarget(s)}</td>
       <td class="num">${fmtScore(s.latest_score)}</td>
       <td>${statusPill(s)}</td>
       <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td>
@@ -697,7 +705,7 @@ function renderRow(s){
     <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
     <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
     <td>${s.attempt_type||'—'}${s.test_month?'<div class="sub2">'+s.test_month+'</div>':''}</td>
-    <td class="num">${s.target||'—'}</td>
+    <td class="num">${fmtTarget(s)}</td>
     <td class="num">${fmtScore(s.latest_score)}${s.diag_score?'<div class="sub2">diag '+fmtScore(s.diag_score)+'</div>':''}</td>
     <td>${statusPill(s)}</td>
     <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td></tr>`;
@@ -875,7 +883,7 @@ function openPanel(s){
     <div class="field-grid">
       <div class="field"><div class="k">Status</div><div class="v">${statusPill(s)}</div></div>
       <div class="field"><div class="k">Attempt type</div><div class="v">${s.attempt_type||'—'}</div></div>
-      <div class="field"><div class="k">Target</div><div class="v">${s.target||'—'}</div></div>
+      <div class="field"><div class="k">Target</div><div class="v">${fmtTarget(s)}</div></div>
       <div class="field"><div class="k">Diagnostic (M/E)</div><div class="v">${s.diag_math||'—'} / ${s.diag_english||'—'}</div></div>
       <div class="field"><div class="k">Latest score</div><div class="v">${fmtScore(s.latest_score)}</div></div>
       <div class="field"><div class="k">Milestone</div><div class="v">${s.milestone_status||'—'}</div></div>
@@ -946,7 +954,7 @@ function showDrill(title, list){
     return `<div class="comment-item" style="cursor:pointer;" onclick="closeDrill(); openPanel(STUDENTS.find(x=>x.student_id==='${s.student_id}'))">
       <div class="txt"><b>${s.name}</b> ${missingEmail ? '<span class="pill red" title="No email on record">no email</span>' : ''}</div>
       <div class="meta">${s.course_type || 'course type not set'} &middot; Math: ${s.math_trainer||'—'} &middot; English: ${s.english_trainer||'—'} &middot; ${statusPill(s)}</div>
-      <div class="meta">Target: ${s.target||'—'} &middot; Diagnostic (M/E): ${s.diag_math||'—'}/${s.diag_english||'—'} &middot; Latest score: ${fmtScore(s.latest_score)}</div>
+      <div class="meta">Target: ${fmtTarget(s)} &middot; Diagnostic (M/E): ${s.diag_math||'—'}/${s.diag_english||'—'} &middot; Latest score: ${fmtScore(s.latest_score)}</div>
       <div class="meta">Hours: ${s.total_hours||'—'} &middot; Classes held (M/E): ${s.classes_held_math}/${s.classes_held_english}${s.classes_left_math!=null||s.classes_left_english!=null?' &middot; Left: '+(s.classes_left_math??'—')+'/'+(s.classes_left_english??'—'):''}</div>
     </div>`;
   }).join('');
@@ -1182,6 +1190,10 @@ function renderLogFormFields(){
     return `
       <label>Total hours allocated</label><input type="number" id="f_puhours" placeholder="e.g. 40">
       <div class="entry-form-row" style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Hours - Math</label><input type="number" id="f_puhoursmath" placeholder="e.g. 20"></div>
+        <div style="flex:1;"><label>Hours - English</label><input type="number" id="f_puhourseng" placeholder="e.g. 20"></div>
+      </div>
+      <div class="entry-form-row" style="display:flex; gap:8px;">
         <div style="flex:1;"><label>Classes purchased - Math</label><input type="number" id="f_puclassesmath" placeholder="e.g. 20"></div>
         <div style="flex:1;"><label>Classes purchased - English</label><input type="number" id="f_puclasseseng" placeholder="e.g. 20"></div>
       </div>
@@ -1241,9 +1253,11 @@ async function submitLogEntry(){
     } else if(logEntryType === 'purchaseinfo'){
       payload.action = 'update_purchase_info';
       payload.total_hours = document.getElementById('f_puhours').value;
+      payload.hours_math = document.getElementById('f_puhoursmath').value;
+      payload.hours_english = document.getElementById('f_puhourseng').value;
       payload.total_classes_math = document.getElementById('f_puclassesmath').value;
       payload.total_classes_english = document.getElementById('f_puclasseseng').value;
-      if(!payload.total_hours && !payload.total_classes_math && !payload.total_classes_english) throw new Error('Fill in at least one field.');
+      if(!payload.total_hours && !payload.hours_math && !payload.hours_english && !payload.total_classes_math && !payload.total_classes_english) throw new Error('Fill in at least one field.');
     } else if(logEntryType === 'comment'){
       payload.action = 'add_comment';
       payload.commenter_role = document.getElementById('f_role').value;
