@@ -828,7 +828,16 @@ function openPanel(s){
     const parts = [t.math_score ? 'M:'+t.math_score : null, t.english_score ? 'E:'+t.english_score : null].filter(Boolean).join(' ');
     return `<span class="score-chip" title="${t.test_label||''}">${t.test_label||'Test'}: ${total}${parts?' ('+parts+')':''}</span>`;
   }).join('');
-  const commentsHtml = (s.weekly_comments||[]).map(c => `<div class="comment-item"><div class="role">${c.commenter_role}</div><div class="txt">${c.comment_text}</div>${c.entered_by?'<div class="meta">— '+c.entered_by+'</div>':''}</div>`).join('');
+  const commentsHtml = (s.weekly_comments||[]).slice().sort((a,b) => new Date(b.entered_at||0) - new Date(a.entered_at||0)).map(c => {
+    const dateStr = c.entered_at ? new Date(c.entered_at).toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'}) : null;
+    let weekTag = '';
+    if(c.entered_at && s.batch_start_date){
+      const start = new Date(s.batch_start_date), when = new Date(c.entered_at);
+      const weekNum = Math.floor((when - start) / (7*86400000)) + 1;
+      if(!isNaN(weekNum) && weekNum > 0) weekTag = ` &middot; Week ${weekNum}`;
+    }
+    return `<div class="comment-item"><div class="role">${c.commenter_role}${dateStr?' <span class="sub2" style="font-weight:400; text-transform:none; letter-spacing:normal;">— '+dateStr+weekTag+'</span>':''}</div><div class="txt">${c.comment_text}</div>${c.entered_by?'<div class="meta">— '+c.entered_by+'</div>':''}</div>`;
+  }).join('');
   const cyclesHtml = (s.reattempt_cycles||[]).map(c => `<div class="cycle-card">
       <div class="hd"><span>${c.source_tracker} tracker &middot; ${c.test_month||'—'} → ${c.reattempt_month||'—'}</span></div>
       <div class="row"><b>Trainers:</b> ${c.math_teacher||'—'} / ${c.english_teacher||'—'}</div>
