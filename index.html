@@ -679,7 +679,7 @@ function currentList(){
 
 function renderHead(){
   document.getElementById('tableHead').innerHTML = viewMode==='overview'
-    ? `<tr><th>Student</th><th>Trainers</th><th>Attempt status</th><th>Milestone</th><th>Root cause</th></tr>`
+    ? `<tr><th>Student</th><th>Trainers</th><th>Target</th><th>Score</th><th>Attempt status</th><th>Milestone</th><th>Root cause</th></tr>`
     : `<tr><th>Student</th><th>Trainers</th><th>Attempt</th><th>Target</th><th>Latest score</th><th>Status</th><th>Milestone</th></tr>`;
 }
 function renderRow(s){
@@ -687,6 +687,8 @@ function renderRow(s){
     return `<tr data-id="${s.student_id}">
       <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
       <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
+      <td class="num">${s.target||'—'}</td>
+      <td class="num">${fmtScore(s.latest_score)}</td>
       <td>${statusPill(s)}</td>
       <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td>
       <td>${rootCauseTags(s)}</td></tr>`;
@@ -935,6 +937,7 @@ function showDrill(title, list){
     return `<div class="comment-item" style="cursor:pointer;" onclick="closeDrill(); openPanel(STUDENTS.find(x=>x.student_id==='${s.student_id}'))">
       <div class="txt"><b>${s.name}</b> ${missingEmail ? '<span class="pill red" title="No email on record">no email</span>' : ''}</div>
       <div class="meta">${s.course_type || 'course type not set'} &middot; Math: ${s.math_trainer||'—'} &middot; English: ${s.english_trainer||'—'} &middot; ${statusPill(s)}</div>
+      <div class="meta">Target: ${s.target||'—'} &middot; Diagnostic (M/E): ${s.diag_math||'—'}/${s.diag_english||'—'} &middot; Latest score: ${fmtScore(s.latest_score)}</div>
       <div class="meta">Hours: ${s.total_hours||'—'} &middot; Classes held (M/E): ${s.classes_held_math}/${s.classes_held_english}${s.classes_left_math!=null||s.classes_left_english!=null?' &middot; Left: '+(s.classes_left_math??'—')+'/'+(s.classes_left_english??'—'):''}</div>
     </div>`;
   }).join('');
