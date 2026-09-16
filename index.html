@@ -431,11 +431,15 @@ function buildWhySummary(s){
     bits.push(`Latest milestone (${(s.milestone_log[s.milestone_log.length-1].milestone_date||'').toString().slice(0,10)}): "${s.milestone_status}".`);
   }
 
-  // Most recent PTM note, verbatim
+  // Most recent PTM note, verbatim - but only if it's a REAL note someone typed, not
+  // the internal provenance placeholder from the comment-parsing recovery ("Recovered
+  // from weekly comments...") which isn't actual PTM content and was misleading to show.
   const ptms = (s.ptm_log||[]).slice().sort((a,b) => new Date(a.ptm_date||0)-new Date(b.ptm_date||0));
   if(ptms.length){
     const last = ptms[ptms.length-1];
-    if(last.notes) bits.push(`Most recent PTM (${(last.ptm_date||'').toString().slice(0,10)}): "${last.notes}".`);
+    const isRealNote = last.notes && !last.notes.startsWith('Recovered from weekly comments');
+    if(isRealNote) bits.push(`Most recent PTM (${(last.ptm_date||'').toString().slice(0,10)}): "${last.notes}".`);
+    else bits.push(`PTM logged on ${(last.ptm_date||'').toString().slice(0,10)} - no discussion notes on record.`);
   } else {
     bits.push(`No PTM logged yet.`);
   }
@@ -694,7 +698,7 @@ function renderRow(s){
   if(viewMode==='overview'){
     return `<tr data-id="${s.student_id}">
       <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
-      <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
+      <td><div>${s.math_trainer?s.math_trainer+' (M)':'—'}</div><div class="sub2">${s.english_trainer?s.english_trainer+' (V)':''}</div></td>
       <td class="num">${fmtTarget(s)}</td>
       <td class="num">${fmtScore(s.latest_score)}</td>
       <td>${statusPill(s)}</td>
@@ -703,7 +707,7 @@ function renderRow(s){
   }
   return `<tr data-id="${s.student_id}">
     <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
-    <td><div>${s.math_trainer||'—'}</div><div class="sub2">${s.english_trainer||''}</div></td>
+    <td><div>${s.math_trainer?s.math_trainer+' (M)':'—'}</div><div class="sub2">${s.english_trainer?s.english_trainer+' (V)':''}</div></td>
     <td>${s.attempt_type||'—'}${s.test_month?'<div class="sub2">'+s.test_month+'</div>':''}</td>
     <td class="num">${fmtTarget(s)}</td>
     <td class="num">${fmtScore(s.latest_score)}${s.diag_score?'<div class="sub2">diag '+fmtScore(s.diag_score)+'</div>':''}</td>
@@ -767,8 +771,8 @@ function renderInsights(list){
     </div>`;
   }
 
-  const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer + ' (M)');
-  const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer + ' (V)');
+  const byMathTrainer = groupBy(list.filter(s => s.math_trainer), s => s.math_trainer);
+  const byEnglishTrainer = groupBy(list.filter(s => s.english_trainer), s => s.english_trainer);
 
   // Month x course-type crosstab - one table with every metric together, instead of
   // digging through separate cards to cross-reference month against SGP/Non-SGP.
