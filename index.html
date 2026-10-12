@@ -492,7 +492,7 @@ function buildStudentView(rawIn){
     s.classes_held_english = s.attendance_log.filter(a => a.subject === 'English' && a.status === 'Held').length;
     // Hours done: sum of the length of each held class (a rescheduled class counts once it is held).
     const heldHours = sub => s.attendance_log.filter(a => a.subject === sub && a.status === 'Held' && Number(a.duration_hours) > 0).reduce((t,a)=>t+Number(a.duration_hours),0);
-    s.hours_done_math = heldHours('Math'); s.hours_done_english = heldHours('English');
+    s.hours_done_math = heldHours('Math') + (Number(s.hours_done_math_before)||0); s.hours_done_english = heldHours('English') + (Number(s.hours_done_english_before)||0);
     s.hours_done_total = s.hours_done_math + s.hours_done_english;
     s.hours_left_total = s.total_hours ? Math.max(0, Number(s.total_hours) - s.hours_done_total) : null;
     s.classes_left_math = s.total_classes_math ? (Number(s.total_classes_math) - s.classes_held_math) : null;
@@ -1436,7 +1436,7 @@ function openPanel(s){
       <div class="field"><div class="k">Hours purchased</div><div class="v">${s.total_hours||'—'}</div></div>
       <div class="field"><div class="k">Hours done (M/E)</div><div class="v">${s.hours_done_math||0} / ${s.hours_done_english||0}${s.hours_left_total!=null?' &middot; '+s.hours_left_total+' h left':''}</div></div>
       <div class="field"><div class="k">Classes held (M/E)</div><div class="v">${s.classes_held_math} / ${s.classes_held_english}</div></div>
-      <div class="field"><div class="k">Classes left (M/E)</div><div class="v">${s.classes_left_math!=null?s.classes_left_math:'—'} / ${s.classes_left_english!=null?s.classes_left_english:'—'}</div></div>
+      ${(s.classes_left_math!=null||s.classes_left_english!=null)?`<div class="field"><div class="k">Classes left (M/E)</div><div class="v">${s.classes_left_math!=null?s.classes_left_math:'—'} / ${s.classes_left_english!=null?s.classes_left_english:'—'}</div></div>`:''}
     </div>
 
     <div class="section-title">Why</div>
@@ -1761,8 +1761,8 @@ function renderLogFormFields(){
       <label>Target</label><select id="f_target">${optHtml(TARGET_OPTIONS.slice(1),'','— Select target —')}</select>
       <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">
       <div class="entry-form-row" style="display:flex; gap:8px;">
-        <div style="flex:1;"><label>Classes purchased - Math (optional)</label><input type="number" id="f_classesmath" placeholder="e.g. 20"></div>
-        <div style="flex:1;"><label>Classes purchased - English (optional)</label><input type="number" id="f_classeseng" placeholder="e.g. 20"></div>
+        <div style="flex:1;"><label>Hours already done - Math (optional)</label><input type="number" step="any" id="f_donemath" placeholder="0"></div>
+        <div style="flex:1;"><label>Hours already done - English (optional)</label><input type="number" step="any" id="f_doneeng" placeholder="0"></div>
       </div>`;
   }
   if(logEntryType === 'purchaseinfo'){
@@ -1773,9 +1773,10 @@ function renderLogFormFields(){
         <div style="flex:1;"><label>Hours - English</label><input type="number" id="f_puhourseng" placeholder="e.g. 20"></div>
       </div>
       <div class="entry-form-row" style="display:flex; gap:8px;">
-        <div style="flex:1;"><label>Classes purchased - Math</label><input type="number" id="f_puclassesmath" placeholder="e.g. 20"></div>
-        <div style="flex:1;"><label>Classes purchased - English</label><input type="number" id="f_puclasseseng" placeholder="e.g. 20"></div>
+        <div style="flex:1;"><label>Hours already done - Math</label><input type="number" step="any" id="f_pudonemath" placeholder="e.g. 6"></div>
+        <div style="flex:1;"><label>Hours already done - English</label><input type="number" step="any" id="f_pudoneeng" placeholder="e.g. 4.5"></div>
       </div>
+      <div class="step-sub">"Already done" means hours taught before this tracker. Classes logged here are added on top.</div>
       <div class="placeholder-box" style="margin-top:6px;">Only fields you fill in get updated - leave a box blank to leave that value as-is.</div>`;
   }
   return '';
@@ -1827,17 +1828,17 @@ async function submitLogEntry(){
       payload.ssm = document.getElementById('f_ssm').value.trim();
       payload.target = document.getElementById('f_target').value.trim();
       payload.total_hours = document.getElementById('f_hours').value;
-      payload.total_classes_math = document.getElementById('f_classesmath').value;
-      payload.total_classes_english = document.getElementById('f_classeseng').value;
+      payload.hours_done_math_before = document.getElementById('f_donemath').value;
+      payload.hours_done_english_before = document.getElementById('f_doneeng').value;
       if(!payload.name) throw new Error('Student name is required.');
     } else if(logEntryType === 'purchaseinfo'){
       payload.action = 'update_purchase_info';
       payload.total_hours = document.getElementById('f_puhours').value;
       payload.hours_math = document.getElementById('f_puhoursmath').value;
       payload.hours_english = document.getElementById('f_puhourseng').value;
-      payload.total_classes_math = document.getElementById('f_puclassesmath').value;
-      payload.total_classes_english = document.getElementById('f_puclasseseng').value;
-      if(!payload.total_hours && !payload.hours_math && !payload.hours_english && !payload.total_classes_math && !payload.total_classes_english) throw new Error('Fill in at least one field.');
+      payload.hours_done_math_before = document.getElementById('f_pudonemath').value;
+      payload.hours_done_english_before = document.getElementById('f_pudoneeng').value;
+      if(!payload.total_hours && !payload.hours_math && !payload.hours_english && !payload.hours_done_math_before && !payload.hours_done_english_before) throw new Error('Fill in at least one field.');
     } else if(logEntryType === 'comment'){
       payload.action = 'add_comment';
       payload.commenter_role = document.getElementById('f_role').value;
@@ -1994,11 +1995,12 @@ function renderEditStudent(){
     <label>Target</label><select id="es_target">${optHtml(TARGET_OPTIONS.slice(1), s.target==null?'':String(s.target), '— None —')}</select>
     ${num('total_hours','Total hours purchased')}
     <div class="entry-form-row" style="display:flex; gap:8px;">
-      <div style="flex:1;">${num('hours_math','Hours: Math')}</div><div style="flex:1;">${num('hours_english','Hours: English')}</div>
+      <div style="flex:1;">${num('hours_math','Hours purchased: Math')}</div><div style="flex:1;">${num('hours_english','Hours purchased: English')}</div>
     </div>
     <div class="entry-form-row" style="display:flex; gap:8px;">
-      <div style="flex:1;">${num('total_classes_math','Classes: Math')}</div><div style="flex:1;">${num('total_classes_english','Classes: English')}</div>
+      <div style="flex:1;">${num('hours_done_math_before','Hours already done: Math')}</div><div style="flex:1;">${num('hours_done_english_before','Hours already done: English')}</div>
     </div>
+    <div class="step-sub">"Already done" means hours taught before this tracker. Classes logged in the dashboard are added on top automatically.</div>
     <div class="log-modal-actions">
       <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
       <button class="btn small" id="esSaveBtn" onclick="saveEditStudent()">Save changes</button>
@@ -2009,7 +2011,7 @@ async function saveEditStudent(){
   const { sid, s } = editStudentCtx;
   const g = id => { const el = document.getElementById('es_'+id); return el ? el.value.trim() : undefined; };
   const norm = v => v==null ? '' : String(v).slice(0,10) === String(v) || !/^\d{4}-\d{2}-\d{2}T/.test(String(v)) ? String(v) : String(v).slice(0,10);
-  const textKeys = ['name','email','parent_email','phone','course_type','ssm','batch_start_date','target_test_date','validity_end_date','total_hours','hours_math','hours_english','total_classes_math','total_classes_english','math_trainer','english_trainer','target'];
+  const textKeys = ['name','email','parent_email','phone','course_type','ssm','batch_start_date','target_test_date','validity_end_date','total_hours','hours_math','hours_english','hours_done_math_before','hours_done_english_before','math_trainer','english_trainer','target'];
   const fields = {};
   textKeys.forEach(k => {
     const nv = g(k); if(nv === undefined) return;
