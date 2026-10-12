@@ -269,6 +269,29 @@ function testOptionList(){
   d.push({value:'Actual Attempt',label:'Actual Attempt'});
   return d;
 }
+
+// ---------- Dropdown helpers (no free typing, so names always match) ----------
+const REASON_OPTIONS = ['Student unwell','Student travelling','Exam / school commitment','Family reason','Power / internet issue','Trainer unwell','Trainer emergency','Public holiday','Technical issue','Other'];
+const SKIP_REASON_OPTIONS = ['Public holiday','Eid holiday','School break','Student on leave','Exam period','Trainer on leave','Other'];
+const TARGET_OPTIONS = ['','200+','1500+'].concat([1600,1550,1500,1450,1400,1350,1300,1250,1200,1150,1100].map(String));
+function teamNames(roles){
+  const t = (typeof RAW!=='undefined' && RAW && RAW.Team_Directory) || [];
+  return [...new Set(t.filter(x=>x.name && (!roles || roles.includes(String(x.role||'').trim()))).map(x=>String(x.name).trim()))].sort((a,b)=>a.localeCompare(b));
+}
+function optHtml(list, sel, blank){
+  const l = list.slice(); if(sel && !l.includes(sel)) l.unshift(sel);
+  return (blank===false?'':`<option value="">${blank||'— Select —'}</option>`) + l.map(o=>`<option value="${String(o).replace(/"/g,'&quot;')}" ${o===sel?'selected':''}>${o}</option>`).join('');
+}
+function monthOptions(){
+  const M=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], out=[], d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-6);
+  for(let i=0;i<30;i++){ out.push(M[d.getMonth()]+' '+d.getFullYear()); d.setMonth(d.getMonth()+1); }
+  return out;
+}
+function studentNames(){ return (typeof STUDENTS!=='undefined'?STUDENTS:[]).map(s=>s.name).filter(Boolean).sort((a,b)=>a.localeCompare(b)); }
+function otherSelect(id, list, label){
+  return `<select id="${id}" onchange="document.getElementById('${id}_o').style.display=this.value==='Other'?'block':'none'">${optHtml(list,'',label||'— Select —')}</select><input type="text" id="${id}_o" placeholder="Type the reason" style="display:none;margin-top:6px;">`;
+}
+function otherVal(id){ const v=document.getElementById(id).value; return v==='Other' ? (document.getElementById(id+'_o').value.trim()||'Other') : v; }
 const CANCEL_BY_OPTIONS = ['Student (personal)','Compliance: Homework not done','Compliance: Test not taken','Compliance: Error log not filled','Trainer unavailable','Ops / other'];
 const PORTION_OPTIONS = ['', '0', '25', '50', '75', '100'];
 function getWhoAmI(){ return localStorage.getItem('sgp_whoami') || ''; }
@@ -1631,7 +1654,7 @@ function renderLogFormFields(){
       <label>Status</label><select id="f_status" onchange="classStatusChanged()"><option>Held</option><option>Cancelled</option><option>Rescheduled</option></select>
       <div id="f_cancelwrap" style="display:none;">
         <label>Cancelled / rescheduled by</label><select id="f_cancelby">${CANCEL_BY_OPTIONS.map(o=>`<option>${o}</option>`).join('')}</select>
-        <label>Reason (optional)</label><input type="text" id="f_reason" placeholder="Optional">
+        <label>Reason (optional)</label>${otherSelect('f_reason',REASON_OPTIONS,'— Optional —')}
       </div>
       <div id="f_heldwrap">
         <label>Class length (hours)</label>
@@ -1651,7 +1674,7 @@ function renderLogFormFields(){
       <div class="placeholder-box" style="margin-bottom:8px;">Use this for a holiday, break or approved leave. The day will not show as "due" for this student.</div>
       <label>Date</label><input type="date" id="f_skipdate">
       <label>Applies to</label><select id="f_skipsub"><option>All</option><option>Math</option><option>English</option></select>
-      <label>Reason</label><input type="text" id="f_skipreason" placeholder="e.g. Eid holiday, student on break">`;
+      <label>Reason</label>${otherSelect('f_skipreason',SKIP_REASON_OPTIONS)}`;
   }
   if(logEntryType === 'milestone'){
     return `
@@ -1671,7 +1694,7 @@ function renderLogFormFields(){
     return `
       <label>Referral type</label>
       <select id="f_reftype"><option>New student referred</option><option>Re-enrollment</option><option>Non-SGP to SGP upgrade</option></select>
-      <label>Referred by (this student's name, if they referred someone)</label><input type="text" id="f_refby" placeholder="Optional">
+      <label>Referred by (this student's name, if they referred someone)</label><select id="f_refby">${optHtml(studentNames(),'','— None —')}</select>
       <label class="checkbox-line"><input type="checkbox" id="f_nonsgptosgp"> This is a Non-SGP → SGP upgrade</label>
       <label>Date</label><input type="date" id="f_refdate">`;
   }
@@ -1679,7 +1702,7 @@ function renderLogFormFields(){
     return `
       <label class="checkbox-line"><input type="checkbox" id="f_sccollected"> Scorecard collected</label>
       <label>Date collected</label><input type="date" id="f_scdate">
-      <label>Reported score</label><input type="text" id="f_scscore" placeholder="e.g. 1540">`;
+      <label>Reported score</label><input type="number" id="f_scscore" min="400" max="1600" step="10" placeholder="e.g. 1540">`;
   }
   if(logEntryType === 'rootcause'){
     return `
@@ -1702,8 +1725,8 @@ function renderLogFormFields(){
     return `
       <label>Attempt type</label>
       <select id="f_atype"><option>Trial</option><option>First</option><option>Second</option><option>Reattempt</option></select>
-      <label>Test month</label><input type="text" id="f_atmonth" placeholder="e.g. AUG or September 2026">
-      <label>Target</label><input type="text" id="f_attarget" placeholder="e.g. 1500+ or 200 point">
+      <label>Test month</label><select id="f_atmonth">${optHtml(monthOptions(),'','— Select month —')}</select>
+      <label>Target</label><select id="f_attarget">${optHtml(TARGET_OPTIONS.slice(1),'','— Select target —')}</select>
       <div class="entry-form-row" style="display:flex; gap:8px;">
         <div style="flex:1;"><label>Diagnostic Math</label><input type="number" id="f_atdiagmath"></div>
         <div style="flex:1;"><label>Diagnostic English</label><input type="number" id="f_atdiageng"></div>
@@ -1714,7 +1737,7 @@ function renderLogFormFields(){
   if(logEntryType === 'trainerchange'){
     return `
       <label>Subject</label><select id="f_tcsubject"><option>Math</option><option>English</option></select>
-      <label>New trainer name</label><input type="text" id="f_tcname" placeholder="Full name">
+      <label>New trainer name</label><select id="f_tcname">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select trainer —')}</select>
       <label>Reason for change</label><input type="text" id="f_tcreason" placeholder="e.g. Trainer left, workload rebalance">
       <div class="placeholder-box" style="margin-top:6px;">The previous trainer's assignment is kept, not erased - it gets an end date so the new trainer can see who taught this student before and how they were performing.</div>`;
   }
@@ -1722,7 +1745,7 @@ function renderLogFormFields(){
     return `
       <label>Date</label><input type="date" id="f_ptmdate">
       <label>MOM doc link (Google Doc)</label><input type="text" id="f_ptmdoc" placeholder="Paste the link to the MOM doc">
-      <label>MOM mail sent by</label><input type="text" id="f_ptmsender" value="${getWhoAmI()}">
+      <label>MOM mail sent by</label><select id="f_ptmsender">${optHtml(teamNames(),getWhoAmI(),'— Select —')}</select>
       <label>Notes (optional)</label><textarea id="f_notes" placeholder="What was discussed?"></textarea>`;
   }
   if(logEntryType === 'newstudent'){
@@ -1733,10 +1756,10 @@ function renderLogFormFields(){
       <label>Phone</label><input type="text" id="f_phone" placeholder="+971...">
       <label>Batch start date</label><input type="date" id="f_batchstart">
       <label>Course type</label><select id="f_coursetype"><option>SGP</option><option>Non-SGP</option></select>
-      <label>Math trainer</label><input type="text" id="f_mathtrainer" placeholder="Trainer name">
-      <label>English trainer</label><input type="text" id="f_engtrainer" placeholder="Trainer name">
-      <label>SSM</label><input type="text" id="f_ssm" placeholder="SSM name">
-      <label>Target</label><input type="text" id="f_target" placeholder="e.g. 1500+ or 200 point">
+      <label>Math trainer</label><select id="f_mathtrainer">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select Math trainer —')}</select>
+      <label>English trainer</label><select id="f_engtrainer">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select English trainer —')}</select>
+      <label>SSM</label><select id="f_ssm">${optHtml(teamNames(['SSM']),'','— Select SSM —')}</select>
+      <label>Target</label><select id="f_target">${optHtml(TARGET_OPTIONS.slice(1),'','— Select target —')}</select>
       <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">
       <div class="entry-form-row" style="display:flex; gap:8px;">
         <div style="flex:1;"><label>Classes purchased - Math (optional)</label><input type="number" id="f_classesmath" placeholder="e.g. 20"></div>
@@ -1837,7 +1860,7 @@ async function submitLogEntry(){
         payload.test_taken = document.getElementById('f_testtaken').checked;
       } else {
         payload.cancelled_by = document.getElementById('f_cancelby').value;
-        payload.cancellation_reason = document.getElementById('f_reason').value.trim();
+        payload.cancellation_reason = otherVal('f_reason');
       }
       payload.comment_text = document.getElementById('f_text').value.trim();
       payload.trainer_name = getWhoAmI();
@@ -1846,7 +1869,7 @@ async function submitLogEntry(){
       payload.action = 'add_scheduled_skip';
       payload.skip_date = document.getElementById('f_skipdate').value;
       payload.subject = document.getElementById('f_skipsub').value;
-      payload.reason = document.getElementById('f_skipreason').value.trim();
+      payload.reason = otherVal('f_skipreason');
       if(!payload.skip_date) throw new Error('Pick a date.');
     } else if(logEntryType === 'milestone'){
       payload.action = 'log_milestone';
@@ -1939,15 +1962,15 @@ const EDIT_SPECS = {
     ['class_date','Class date','date'],['subject','Subject','select',['Math','English']],
     ['status','Status','select',['Held','Cancelled','Rescheduled']],
     ['cancelled_by','Cancelled / rescheduled by','select',['']].concat([]),
-    ['cancellation_reason','Reason','text'],['duration_hours','Class length (hours)','number'],
+    ['cancellation_reason','Reason','select',['Student unwell','Student travelling','Exam / school commitment','Family reason','Power / internet issue','Trainer unwell','Trainer emergency','Public holiday','Technical issue','Other']],['duration_hours','Class length (hours)','number'],
     ['portion_done_pct','Portion completed (%)','select',PORTION_OPTIONS],
     ['hw_done','Homework completed','bool'],['error_log_filled','Error log filled','bool'],['test_taken','Test taken','bool'],
     ['comment_text','Comment','textarea']]},
-  PTM_Log:{ title:'Edit PTM', fields:[['ptm_date','PTM date','date'],['doc_link','MOM doc link','text'],['mom_sent_by','MOM mail sent by','text'],['notes','Notes','textarea']]},
+  PTM_Log:{ title:'Edit PTM', fields:[['ptm_date','PTM date','date'],['doc_link','MOM doc link','text'],['mom_sent_by','MOM mail sent by','select','TEAM'],['notes','Notes','textarea']]},
   Test_Scores:{ title:'Edit test score', fields:[['test_label','Test','testselect'],['test_date','Test date','date'],['math_score','Math','number'],['english_score','English','number'],['total_score','Total','number']]},
   Milestones:{ title:'Edit milestone', fields:[['milestone_date','Date','date'],['milestone_status','Status','text']]},
-  Referral_Log:{ title:'Edit referral', fields:[['type','Type','select',['New student referred','Re-enrollment','Non-SGP to SGP upgrade']],['referred_by','Referred by','text'],['event_date','Date','date']]},
-  Scorecards:{ title:'Edit scorecard', fields:[['collected','Scorecard collected','bool'],['date_collected','Date collected','date'],['reported_score','Reported score','text']]}
+  Referral_Log:{ title:'Edit referral', fields:[['type','Type','select',['New student referred','Re-enrollment','Non-SGP to SGP upgrade']],['referred_by','Referred by','select','STUDENTS'],['event_date','Date','date']]},
+  Scorecards:{ title:'Edit scorecard', fields:[['collected','Scorecard collected','bool'],['date_collected','Date collected','date'],['reported_score','Reported score','number']]}
 };
 EDIT_SPECS.Class_Attendance.fields[3] = ['cancelled_by','Cancelled / rescheduled by','select',[''].concat(CANCEL_BY_OPTIONS, ['Student'])];
 
@@ -1980,6 +2003,8 @@ function renderEditModal(){
     if(type==='date') return `<label>${label}</label><input type="date" id="ef_${k}" value="${String(v).slice(0,10)}">`;
     if(type==='number') return `<label>${label}</label><input type="number" step="any" id="ef_${k}" value="${v}">`;
     if(type==='bool') return `<label class="checkbox-line"><input type="checkbox" id="ef_${k}" ${String(v).toUpperCase()==='TRUE'?'checked':''}> ${label}</label>`;
+    if(type==='select' && opts==='TEAM') opts=['']. concat(teamNames());
+    if(type==='select' && opts==='STUDENTS') opts=['']. concat(studentNames());
     if(type==='select') return `<label>${label}</label><select id="ef_${k}">${[...new Set([String(v)].concat(opts))].map(o=>`<option ${o===String(v)?'selected':''} value="${o}">${o===''?'—':o}</option>`).join('')}</select>`;
     if(type==='testselect') return `<label>${label}</label><select id="ef_${k}">${testOptionList().map(o=>`<option value="${o.value}" ${o.value===String(v)?'selected':''}>${o.label}</option>`).join('')}</select>`;
     return `<label>${label}</label><input type="text" id="ef_${k}" value="${String(v).replace(/"/g,'&quot;')}">`;
