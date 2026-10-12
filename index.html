@@ -173,6 +173,7 @@
       <button class="btn ghost" onclick="refreshData()" title="Refresh">↻</button>
       <button class="btn ghost" onclick="downloadBackup()">Download backup</button>
       <button class="btn ghost" onclick="window.print()">Export PDF</button>
+      <button class="btn ghost" onclick="openDocs()">Documents</button>
       <button class="btn ghost" id="todoBtn" onclick="openPending()">To-do <span id="todoCount" class="pill red" style="display:none;"></span></button>
       <button class="btn-log" onclick="openLogModal()">+ Log Entry</button>
     </div>
@@ -1211,9 +1212,13 @@ function trackerDocHtml(s, tr){
   ${box('Comments of English Instructor', boxText(tr,'english'))}
   </div>`;
 }
+function blobToBase64(blob){
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+}
 async function downloadTrackerPdf(trackerId){
   const tr = (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerId); if(!tr) return;
   const s = STUDENTS.find(x => x.student_id === tr.student_id); if(!s) return;
+  if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first, so the saved PDF shows who created it.'); return; }
   const holder = document.createElement('div');
   holder.style.cssText = 'position:fixed; left:-10000px; top:0;';
   holder.innerHTML = trackerDocHtml(s, tr);
@@ -1221,7 +1226,18 @@ async function downloadTrackerPdf(trackerId){
   const fname = `Progress Tracker - ${s.name} - ${tr.period_label||'update'}.pdf`;
   try{
     if(!window.html2pdf) throw new Error('pdf library not loaded');
-    await window.html2pdf().set({ margin:0, filename:fname, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:'px', format:[760, 1075], orientation:'portrait', hotfixes:['px_scaling']}, pagebreak:{mode:['css','legacy']} }).from(holder.firstElementChild).save();
+    const blob = await window.html2pdf().set({ margin:0, filename:fname, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:'px', format:[760, 1075], orientation:'portrait', hotfixes:['px_scaling']}, pagebreak:{mode:['css','legacy']} }).from(holder.firstElementChild).outputPdf('blob');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    // Also keep a copy in Drive and list it in the Docs_Progress_Tracker tab
+    try{
+      const b64 = await blobToBase64(blob);
+      await postAction({ action:'save_document', doc_type:'progress_tracker', student_id:s.student_id, student_name:s.name, tracker_record_id:trackerId, period_label:tr.period_label||'', file_name:fname, pdf_base64:b64 });
+      await refreshData();
+      alert('PDF downloaded and a copy saved in the Documents register.');
+    } catch(e2){
+      alert('PDF downloaded, but the copy could not be saved to the Documents register: ' + e2.message + '\n(If it says unknown action, deploy the latest script version.)');
+    }
   } catch(err){
     // Fallback: open a print page so the person can choose "Save as PDF"
     const w = window.open('', '_blank');
@@ -1230,78 +1246,58 @@ async function downloadTrackerPdf(trackerId){
   }
   document.body.removeChild(holder);
 }
-
-let trackerCtx = null;
-function openTracker(sid, trackerId){
-  const s = STUDENTS.find(x => x.student_id === sid); if(!s) return;
-  trackerCtx = { sid, trackerId: trackerId || null };
-  renderTrackerModal();
-  document.getElementById('logOverlay').classList.add('open');
-}
-function renderTrackerModal(){
-  const s = STUDENTS.find(x => x.student_id === trackerCtx.sid);
-  const who = getWhoAmI(); const modal = document.getElementById('logModal');
-  if(!who){
-    const teamList = (RAW && RAW.Team_Directory || []);
-    modal.innerHTML = `<h3>Who are you?</h3><div class="step-sub">So the tracker is attributed to you.</div>
-      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${t.role})</option>`).join('')}</select>
-      <div class="log-modal-actions"><button class="btn ghost small" onclick="closeLogModal()">Cancel</button><button class="btn small" onclick="confirmWhoAmI()">Continue</button></div>`;
-    return;
-  }
-  const tr = trackerCtx.trackerId ? (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerCtx.trackerId) : null;
-  const myBox = (who && s.english_trainer && who.toLowerCase()===s.english_trainer.toLowerCase()) ? 'English' : 'Math';
-  const periods = ['Day 30','Day 60','Other'];
-  const curPeriod = tr ? tr.period_label : 'Day 30';
-  modal.innerHTML = `<h3>Progress tracker: ${escHtml(s.name)}</h3>
-    <div class="step-sub">Math trainer fills the Math box, English trainer fills the English box. Anyone can download and mark it sent once both are filled.</div>
-    <label>Period</label>
-    <select id="tk_period" ${tr?'disabled':''}>${periods.map(p=>`<option ${p===curPeriod||(!periods.includes(curPeriod)&&p==='Other')?'selected':''}>${p}</option>`).join('')}</select>
-    <input type="text" id="tk_custom" placeholder="Name for this tracker (e.g. Mid-course update)" value="${tr && !periods.includes(tr.period_label) ? escHtml(tr.period_label) : ''}" style="margin-top:6px;" ${tr?'disabled':''}>
-    <label>Regularity / Punctuality line (auto-filled, you can change it)</label>
-    <textarea id="tk_reg" style="min-height:50px;">${escHtml((tr&&tr.regularity_note)||autoRegularity(s))}</textarea>
-    <label>I am filling the</label>
-    <select id="tk_box" onchange="trackerBoxChanged()"><option ${myBox==='Math'?'selected':''}>Math</option><option ${myBox==='English'?'selected':''}>English</option></select>
-    <label id="tk_label">Comments of ${myBox} Instructor</label>
-    <textarea id="tk_text" style="min-height:180px;" placeholder="Syllabus done, drill accuracy, concerns, further course of action, student action plan, target for next test. Start a line with - for a bullet. Use **bold** for emphasis."></textarea>
-    <div class="meta" id="tk_other" style="margin-top:6px;"></div>
-    <div class="log-modal-actions">
-      <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
-      <button class="btn small" id="tkSaveBtn" onclick="saveTrackerBox()">Save</button>
-    </div><div class="save-status" id="logSaveStatus"></div>`;
-  trackerBoxChanged();
-}
-function trackerBoxChanged(){
-  const box = document.getElementById('tk_box').value.toLowerCase();
-  const tr = trackerCtx.trackerId ? (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerCtx.trackerId) : null;
-  document.getElementById('tk_label').textContent = 'Comments of ' + (box==='math'?'Maths':'English') + ' Instructor';
-  document.getElementById('tk_text').value = tr ? boxText(tr, box) : '';
-  const other = box==='math' ? 'english' : 'math';
-  document.getElementById('tk_other').textContent = tr && tr[other+'_filled_by'] ? `The ${other==='math'?'Math':'English'} box was filled by ${tr[other+'_filled_by']}.` : `The ${other==='math'?'Math':'English'} box is still empty.`;
-}
-async function saveTrackerBox(){
-  const s = STUDENTS.find(x => x.student_id === trackerCtx.sid);
-  const box = document.getElementById('tk_box').value;
-  const text = document.getElementById('tk_text').value.trim();
-  let period = trackerCtx.trackerId ? null : document.getElementById('tk_period').value;
-  if(period === 'Other') period = document.getElementById('tk_custom').value.trim() || 'Update';
-  if(!text){ document.getElementById('logSaveStatus').className='save-status fail'; document.getElementById('logSaveStatus').textContent='The box is empty.'; return; }
-  const btn = document.getElementById('tkSaveBtn'); btn.disabled = true;
-  try{
-    const payload = { action:'save_tracker_box', student_id:s.student_id, student_name:s.name, subject:box, box_fields:{text}, regularity_note: document.getElementById('tk_reg').value.trim(), target_test_date: s.target_test_date||'' };
-    if(trackerCtx.trackerId) payload.record_id = trackerCtx.trackerId; else payload.period_label = period;
-    await postAction(payload);
-    await refreshData(); closeLogModal();
-    const st = STUDENTS.find(x => x.student_id === s.student_id); if(st) openPanel(st);
-  } catch(err){
-    document.getElementById('logSaveStatus').className='save-status fail';
-    document.getElementById('logSaveStatus').textContent='Could not save: '+err.message; btn.disabled = false;
-  }
-}
 async function markTrackerSent(trackerId){
   if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first.'); return; }
   const tr = (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerId);
   try{ await postAction({ action:'mark_tracker_sent', record_id:trackerId }); await refreshData();
     const st = STUDENTS.find(x => x.student_id === tr.student_id); if(st) openPanel(st); } catch(err){ alert('Could not save: '+err.message); }
+}
+
+// ---------- Documents register ----------
+let docsTab = 'Docs_Progress_Tracker', docsSearch = '';
+const DOC_TABS = {
+  Docs_Progress_Tracker:{ label:'Progress trackers', cols:[['student_name','Student'],['period_label','Period'],['file_link','File','link'],['status','Status'],['saved_by','Saved by'],['saved_at','Saved on','date'],['sent_by','Sent by'],['sent_at','Sent on','date'],['math_trainer','Math trainer'],['english_trainer','English trainer']] },
+  Docs_MOM:{ label:'MOM docs', cols:[['student_name','Student'],['ptm_date','PTM date','date'],['doc_link','MOM doc','link'],['mom_sent_by','Mail sent by'],['saved_by','Saved by'],['saved_at','Saved on','date'],['ssm','SSM']] },
+  Docs_Scorecard:{ label:'Scorecards', cols:[['student_name','Student'],['date_collected','Date','date'],['reported_score','Score'],['collected','Collected'],['file_link','File','link'],['saved_by','Saved by'],['saved_at','Saved on','date']] }
+};
+function docRows(tab){ return (RAW[tab]||[]).filter(r => !isHiddenRow(r)).slice().sort((a,b) => String(b.saved_at||'').localeCompare(String(a.saved_at||''))); }
+function docCell(r, c){
+  const [k,,type] = c; const v = r[k];
+  if(type==='link') return v ? `<a href="${escHtml(v)}" target="_blank" style="color:var(--violet);">Open</a>` : '<span class="sub2">none</span>';
+  if(type==='date') return v ? escHtml(String(v).slice(0,10)) : '';
+  if(k==='collected') return String(v).toUpperCase()==='TRUE' ? 'Yes' : 'No';
+  return escHtml(v);
+}
+function openDocs(){ renderDocs(); document.getElementById('drillOverlay').classList.add('open'); }
+function setDocsTab(t){ docsTab = t; renderDocs(); }
+function setDocsSearch(v){ docsSearch = v; renderDocs(true); }
+function renderDocs(keepFocus){
+  const spec = DOC_TABS[docsTab];
+  const q = docsSearch.trim().toLowerCase();
+  const rows = docRows(docsTab).filter(r => !q || Object.values(r).some(v => String(v==null?'':v).toLowerCase().includes(q)));
+  const head = spec.cols.map(c => `<th style="text-align:left; padding:6px 8px; font-size:11px; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid var(--line); white-space:nowrap;">${c[1]}</th>`).join('');
+  const body = rows.slice(0,500).map(r => `<tr>${spec.cols.map(c => `<td style="padding:6px 8px; font-size:12.5px; border-bottom:1px solid var(--line); white-space:nowrap;">${docCell(r,c)}</td>`).join('')}</tr>`).join('');
+  document.getElementById('drillPanel').innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
+      <span style="font-size:16px; font-weight:600;">Documents <span class="sub2">(${rows.length})</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span>
+    </div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">${Object.keys(DOC_TABS).map(t => `<div class="entry-type-opt ${t===docsTab?'active':''}" onclick="setDocsTab('${t}')">${DOC_TABS[t].label} (${docRows(t).length})</div>`).join('')}</div>
+    <input type="text" id="docsSearch" placeholder="Search student, person, period..." value="${escHtml(docsSearch)}" oninput="setDocsSearch(this.value)" style="margin-bottom:8px;">
+    <div style="overflow-x:auto;">${rows.length ? `<table style="border-collapse:collapse; width:100%;"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : '<div class="placeholder-box">Nothing saved here yet.</div>'}</div>
+    <div class="sub2" style="display:block; margin-top:8px; text-transform:none; letter-spacing:normal;">The same lists live in the Docs_ tabs of the Google Sheet. Progress tracker PDFs are stored in the "SGP Tracker Documents" folder in Drive.</div>`;
+  if(keepFocus){ const el = document.getElementById('docsSearch'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }
+}
+function studentDocsHtml(s){
+  const parts = [];
+  Object.keys(DOC_TABS).forEach(t => {
+    docRows(t).filter(r => r.student_id === s.student_id).forEach(r => {
+      const link = r.file_link || r.doc_link;
+      parts.push(`<div class="comment-item"><div class="txt"><b>${DOC_TABS[t].label.replace(/s$/,'')}</b>${r.period_label?' &middot; '+escHtml(r.period_label):''}${r.ptm_date?' &middot; '+escHtml(String(r.ptm_date).slice(0,10)):''} ${link?`&middot; <a href="${escHtml(link)}" target="_blank" style="color:var(--violet);">Open</a>`:''}</div><div class="meta">Saved by ${escHtml(r.saved_by||'—')} on ${escHtml(String(r.saved_at||'').slice(0,10))}${r.sent_at?' &middot; sent by '+escHtml(r.sent_by||'—'):''}</div></div>`);
+    });
+  });
+  if(!parts.length) return '';
+  return `<div class="section-title">Documents <span class="sub2">${parts.length}</span></div><div class="comment-list">${parts.join('')}</div>`;
 }
 function trackerSectionHtml(s){
   const isSGP = (s.course_type||'').trim().toUpperCase()==='SGP';
@@ -1344,6 +1340,7 @@ function panelActionsHtml(s){
   const done = s.course_completed === true || String(s.course_completed).toUpperCase()==='TRUE';
   const isSGP = (s.course_type||'').trim().toUpperCase()==='SGP';
   return `<div style="display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px;">
+    <button class="btn small" onclick="openEditStudent('${s.student_id}')">&#9998; Edit details</button>
     ${done ? `<span class="pill teal">Course completed ${s.course_completed_on?String(s.course_completed_on).slice(0,10):''}${s.course_completed_by?' by '+s.course_completed_by:''}</span>`
            : `<button class="btn ghost small" onclick="markCourseCompleted('${s.student_id}')">Mark course completed</button>`}
     <select onchange="setOutcome('${s.student_id}', this.value)" style="font-size:12px;">${OUTCOME_OPTIONS.map(o=>`<option value="${o}" ${o===(s.outcome_status||'')?'selected':''}>${o===''?'Outcome: automatic':o}</option>`).join('')}</select>
@@ -1490,6 +1487,7 @@ function openPanel(s){
     ${milestoneHtml ? `<div class="comment-list">${milestoneHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
 
     ${trackerSectionHtml(s)}
+    ${studentDocsHtml(s)}
 
     <div class="section-title">PTM log <span class="sub2">${(s.ptm_log||[]).length} logged</span></div>
     ${ptmHtml ? `<div class="comment-list">${ptmHtml}</div>` : '<div class="placeholder-box">None logged yet.</div>'}
@@ -1542,7 +1540,7 @@ function openLogModal(preStudentId, preStudentName){
   renderLogModal();
   document.getElementById('logOverlay').classList.add('open');
 }
-function closeLogModal(){ editCtx = null; trackerCtx = null; document.getElementById('logOverlay').classList.remove('open'); }
+function closeLogModal(){ editCtx = null; editStudentCtx = null; trackerCtx = null; document.getElementById('logOverlay').classList.remove('open'); }
 document.getElementById('logOverlay').addEventListener('click', e => { if(e.target.id==='logOverlay') closeLogModal(); });
 
 function renderLogModal(){
@@ -1702,7 +1700,8 @@ function renderLogFormFields(){
     return `
       <label class="checkbox-line"><input type="checkbox" id="f_sccollected"> Scorecard collected</label>
       <label>Date collected</label><input type="date" id="f_scdate">
-      <label>Reported score</label><input type="number" id="f_scscore" min="400" max="1600" step="10" placeholder="e.g. 1540">`;
+      <label>Reported score</label><input type="number" id="f_scscore" min="400" max="1600" step="10" placeholder="e.g. 1540">
+      <label>Scorecard link (optional, Drive or image link)</label><input type="text" id="f_sclink" placeholder="Paste the link">`;
   }
   if(logEntryType === 'rootcause'){
     return `
@@ -1897,6 +1896,7 @@ async function submitLogEntry(){
       payload.collected = document.getElementById('f_sccollected').checked;
       payload.date_collected = document.getElementById('f_scdate').value;
       payload.reported_score = document.getElementById('f_scscore').value.trim();
+      payload.doc_link = document.getElementById('f_sclink').value.trim();
     } else if(logEntryType === 'rootcause'){
       payload.action = 'log_root_cause';
       const fullStudent = STUDENTS.find(x => x.student_id === logPickedStudent.id);
@@ -1952,6 +1952,86 @@ async function submitLogEntry(){
 }
 
 // ---------- EDIT / REMOVE any logged entry (old value is kept in the Audit_Log tab) ----------
+
+// ---------- Edit student details (overall level) ----------
+let editStudentCtx = null;
+function openEditStudent(sid){
+  const s = STUDENTS.find(x => x.student_id === sid); if(!s) return;
+  trackerCtx = null; editCtx = null; editStudentCtx = { sid, s };
+  renderEditStudent();
+  document.getElementById('logOverlay').classList.add('open');
+}
+function renderEditStudent(){
+  const { s } = editStudentCtx;
+  const who = getWhoAmI();
+  const modal = document.getElementById('logModal');
+  if(!who){
+    modal.innerHTML = `<h3>Who are you?</h3><div class="step-sub">Pick your name so edits are recorded against you.</div>
+      <select id="whoSelect"><option value="">— Select —</option>${teamNames().map(n=>`<option value="${n}">${n}</option>`).join('')}</select>
+      <div class="log-modal-actions"><button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
+      <button class="btn small" onclick="const v=document.getElementById('whoSelect').value; if(v){ localStorage.setItem('sgp_whoami', v); renderEditStudent(); }">Continue</button></div>`;
+    return;
+  }
+  const d10 = v => v ? String(v).slice(0,10) : '';
+  const txt = (k,l,ph) => `<label>${l}</label><input type="text" id="es_${k}" value="${String(s[k]==null?'':s[k]).replace(/"/g,'&quot;')}" placeholder="${ph||''}">`;
+  const num = (k,l) => `<label>${l}</label><input type="number" step="any" id="es_${k}" value="${s[k]==null?'':s[k]}">`;
+  const dt  = (k,l) => `<label>${l}</label><input type="date" id="es_${k}" value="${d10(s[k])}">`;
+  const trainers = teamNames(['Trainer','Pod Leader']);
+  modal.innerHTML = `<h3>Edit details: ${s.name}</h3>
+    <div class="step-sub">Editing as <b>${who}</b>. Change only what is wrong or missing. Every change is saved in the Audit_Log tab with the old value.</div>
+    ${txt('name','Student name *')}
+    ${txt('email','Student email')}
+    ${txt('parent_email','Parent email')}
+    ${txt('phone','Phone')}
+    <label>Course type</label><select id="es_course_type">${optHtml(['SGP','Non-SGP'], (s.course_type||'').trim(), '— Select —')}</select>
+    ${dt('batch_start_date','Batch start date')}
+    ${dt('target_test_date','Target test date')}
+    ${dt('validity_end_date','Valid until')}
+    <label>Math trainer</label><select id="es_math_trainer">${optHtml(trainers, s.math_trainer||'', '— None —')}</select>
+    <label>English trainer</label><select id="es_english_trainer">${optHtml(trainers, s.english_trainer||'', '— None —')}</select>
+    <div class="step-sub" style="margin-top:2px;">A trainer change keeps the old trainer in the history with an end date.</div>
+    <label>SSM</label><select id="es_ssm">${optHtml(teamNames(['SSM']), s.ssm||'', '— None —')}</select>
+    <label>Target</label><select id="es_target">${optHtml(TARGET_OPTIONS.slice(1), s.target==null?'':String(s.target), '— None —')}</select>
+    ${num('total_hours','Total hours purchased')}
+    <div class="entry-form-row" style="display:flex; gap:8px;">
+      <div style="flex:1;">${num('hours_math','Hours: Math')}</div><div style="flex:1;">${num('hours_english','Hours: English')}</div>
+    </div>
+    <div class="entry-form-row" style="display:flex; gap:8px;">
+      <div style="flex:1;">${num('total_classes_math','Classes: Math')}</div><div style="flex:1;">${num('total_classes_english','Classes: English')}</div>
+    </div>
+    <div class="log-modal-actions">
+      <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
+      <button class="btn small" id="esSaveBtn" onclick="saveEditStudent()">Save changes</button>
+    </div>
+    <div class="save-status" id="logSaveStatus"></div>`;
+}
+async function saveEditStudent(){
+  const { sid, s } = editStudentCtx;
+  const g = id => { const el = document.getElementById('es_'+id); return el ? el.value.trim() : undefined; };
+  const norm = v => v==null ? '' : String(v).slice(0,10) === String(v) || !/^\d{4}-\d{2}-\d{2}T/.test(String(v)) ? String(v) : String(v).slice(0,10);
+  const textKeys = ['name','email','parent_email','phone','course_type','ssm','batch_start_date','target_test_date','validity_end_date','total_hours','hours_math','hours_english','total_classes_math','total_classes_english','math_trainer','english_trainer','target'];
+  const fields = {};
+  textKeys.forEach(k => {
+    const nv = g(k); if(nv === undefined) return;
+    const ov = (k==='math_trainer'||k==='english_trainer'||k==='target') ? (s[k]==null?'':String(s[k])) : norm(s[k]);
+    if(nv !== ov) fields[k] = nv;
+  });
+  if('name' in fields && !fields.name){ alert('Student name cannot be blank.'); return; }
+  if(!Object.keys(fields).length){ closeLogModal(); return; }
+  const btn = document.getElementById('esSaveBtn'); btn.disabled = true;
+  try{
+    await postAction({ action:'edit_student', student_id:sid, fields });
+    document.getElementById('logSaveStatus').className='save-status ok';
+    document.getElementById('logSaveStatus').textContent='Saved.';
+    await refreshData();
+    closeLogModal();
+    const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
+  } catch(err){
+    document.getElementById('logSaveStatus').className='save-status fail';
+    document.getElementById('logSaveStatus').textContent='Could not save: ' + err.message + ' (if it says unknown action, the v6 script is not deployed yet)';
+    btn.disabled = false;
+  }
+}
 let editCtx = null;
 const ID_FIELD = { Attempts:'attempt_id' };
 const EDIT_SPECS = {
@@ -1970,7 +2050,7 @@ const EDIT_SPECS = {
   Test_Scores:{ title:'Edit test score', fields:[['test_label','Test','testselect'],['test_date','Test date','date'],['math_score','Math','number'],['english_score','English','number'],['total_score','Total','number']]},
   Milestones:{ title:'Edit milestone', fields:[['milestone_date','Date','date'],['milestone_status','Status','text']]},
   Referral_Log:{ title:'Edit referral', fields:[['type','Type','select',['New student referred','Re-enrollment','Non-SGP to SGP upgrade']],['referred_by','Referred by','select','STUDENTS'],['event_date','Date','date']]},
-  Scorecards:{ title:'Edit scorecard', fields:[['collected','Scorecard collected','bool'],['date_collected','Date collected','date'],['reported_score','Reported score','number']]}
+  Scorecards:{ title:'Edit scorecard', fields:[['collected','Scorecard collected','bool'],['date_collected','Date collected','date'],['reported_score','Reported score','number'],['doc_link','Scorecard link','text']]}
 };
 EDIT_SPECS.Class_Attendance.fields[3] = ['cancelled_by','Cancelled / rescheduled by','select',[''].concat(CANCEL_BY_OPTIONS, ['Student'])];
 
