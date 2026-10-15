@@ -281,7 +281,7 @@ const TARGET_OPTIONS = ['','200+','1500+'].concat([1600,1550,1500,1450,1400,1350
 
 // ---------- v15 helpers ----------
 const TRAINER_ROLES_LIST = ['Trainer','Master Trainer','Pod Leader'];
-const CHANGE_TRAINER_ROLES = ['Master Trainer','Pod Leader','Program','Ops','Academic Head'];
+const CHANGE_TRAINER_ROLES = ['Master Trainer','Pod Leader','Program','Ops','Academic Head','SSM'];
 const COURSE_STATUS_OPTIONS = ['Active','Paused','On hold','Discontinued','Completed','Batch not created'];
 function roleLabel(r){ return String(r||'')==='Pod Leader' ? 'Master Trainer' : r; }
 function rolesOfStr(r){ return String(r||'').split(/[,;\/&]/).map(x=>x.trim()).filter(Boolean).map(x=>x==='Pod Leader'?'Master Trainer':x); }
