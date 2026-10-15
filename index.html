@@ -174,7 +174,9 @@
       <button class="btn ghost" onclick="downloadBackup()">Download backup</button>
       <button class="btn ghost" onclick="window.print()">Export PDF</button>
       <button class="btn ghost" onclick="openDocs()">Documents</button>
-      <button class="btn ghost" id="todoBtn" onclick="openPending()">To-do <span id="todoCount" class="pill red" style="display:none;"></span></button>
+      <button class="btn ghost" onclick="openWorkload()">Workload</button>
+      <button class="btn ghost" onclick="openAppraisal()">Appraisal view</button>
+      <button class="btn ghost" id="todoBtn" onclick="openPendingFresh()">To-do <span id="todoCount" class="pill red" style="display:none;"></span></button>
       <button class="btn-log" onclick="openLogModal()">+ Log Entry</button>
     </div>
   </div>
@@ -247,6 +249,7 @@ const TABS = [
   { key: 'irregular', label: 'Irregular', filter: s => s.is_irregular },
   { key: 'trial_na', label: 'Trial missed (NA)', filter: s => s.is_trial_miss },
   { key: 'unresolved', label: 'In progress / awaiting result', filter: s => s.achieved === null },
+  { key: 'check_goal', label: 'Check: score meets goal', filter: s => s.review_meets_goal },
 ];
 
 // ---------- API URL ----------
@@ -275,9 +278,82 @@ function testOptionList(){
 const REASON_OPTIONS = ['Student unwell','Student travelling','Exam / school commitment','Family reason','Power / internet issue','Trainer unwell','Trainer emergency','Public holiday','Technical issue','Other'];
 const SKIP_REASON_OPTIONS = ['Public holiday','Eid holiday','School break','Student on leave','Exam period','Trainer on leave','Other'];
 const TARGET_OPTIONS = ['','200+','1500+'].concat([1600,1550,1500,1450,1400,1350,1300,1250,1200,1150,1100].map(String));
+
+// ---------- v15 helpers ----------
+const TRAINER_ROLES_LIST = ['Trainer','Master Trainer','Pod Leader'];
+const CHANGE_TRAINER_ROLES = ['Master Trainer','Pod Leader','Program','Ops','Academic Head'];
+const COURSE_STATUS_OPTIONS = ['Active','Paused','On hold','Discontinued','Completed','Batch not created'];
+function roleLabel(r){ return String(r||'')==='Pod Leader' ? 'Master Trainer' : r; }
+function rolesOfStr(r){ return String(r||'').split(/[,;\/&]/).map(x=>x.trim()).filter(Boolean).map(x=>x==='Pod Leader'?'Master Trainer':x); }
+function rolesOfName(name){
+  if(RAW && RAW.me && RAW.me.roles && String(RAW.me.name||'')===String(name||'')) return rolesOfStr(RAW.me.roles.join(','));
+  const t = (RAW && RAW.Team_Directory) || [];
+  const m = t.find(x => String(x.name||'').trim() === String(name||'').trim());
+  return m ? rolesOfStr(m.role) : [];
+}
+function canChangeTrainer(){ if(RAW && RAW.me) return !!RAW.me.canChangeTrainer; return rolesOfName(getWhoAmI()).some(r => CHANGE_TRAINER_ROLES.includes(r)); }
+const NO_TRAINER_CHANGE_MSG = 'Only Ops and Master Trainers can change trainers. Please ask one of them, or pick your own name again if you are one of them.';
+const MON3 = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+function normMonth(m, batchStart){
+  const raw = String(m==null?'':m).trim(); if(!raw) return '';
+  const full = {JANUARY:0,FEBRUARY:1,MARCH:2,APRIL:3,JUNE:5,JULY:6,AUGUST:7,SEPTEMBER:8,OCTOBER:9,NOVEMBER:10,DECEMBER:11,SEPT:8};
+  let mi = -1, yr = null;
+  const up = raw.toUpperCase();
+  const iso = up.match(/^(\d{4})-(\d{2})/);
+  if(iso){ yr = +iso[1]; mi = +iso[2]-1; }
+  else {
+    const w = up.match(/[A-Z]+/); 
+    if(w){ const k = w[0]; if(full[k]!=null) mi = full[k]; else { const i = MON3.indexOf(k.slice(0,3)); if(i>=0 && k.length>=3) mi = i; } }
+    const y = up.match(/(\d{4})|['’\-\s\/]?(\d{2})\b(?!.*\d)/);
+    if(y){ yr = y[1] ? +y[1] : (+y[2] >= 20 && +y[2] <= 40 ? 2000 + +y[2] : null); }
+    if(mi<0){ const n = up.match(/^(\d{1,2})[\/\-]/); if(n && +n[1]>=1 && +n[1]<=12) mi = +n[1]-1; }
+  }
+  if(mi < 0) return raw;
+  if(yr == null){
+    const bs = batchStart ? new Date(batchStart) : null;
+    if(bs && !isNaN(bs)){ yr = bs.getUTCFullYear(); if(mi < bs.getUTCMonth()) yr += 1; }
+    else yr = 2026;
+    if(!((yr === 2025 && mi === 11) || yr === 2026)) yr = 2026;   // tracker runs Dec 2025 to Dec 2026, so a month with no year means the current year
+  }
+  if(yr === 2025 && mi !== 11) yr = 2026;
+  return MON3[mi] + ' ' + yr;
+}
+function monthSortKey(label){ const m = String(label||'').match(/^([A-Z]{3}) (\d{4})$/); return m ? (+m[2])*12 + MON3.indexOf(m[1]) : 9e9; }
+function targetN(s){
+  let tn = Number(s.target_numeric);
+  if(tn === 80 || tn === 230) tn = 200; else if(tn === 760 || tn === 800) tn = 1500;
+  if(!tn){
+    const t = String(s.target||'').trim().replace(/\s/g,'');
+    const n = parseFloat(t);
+    if(/^(80|230|200)\+?$/.test(t)) tn = 200;
+    else if(/^(760|800|1500)\+?$/.test(t) && !(n>=1000 && !/\+/.test(t) && n!==1500)) tn = 1500;
+    else if(n >= 1000) tn = n;
+  }
+  return tn || 0;
+}
+function effGoal(s){
+  let n = targetN(s), derived = false;
+  const d = Number(s.diag_score) || 0;
+  if(!n && d > 0){ n = d < 1200 ? 200 : 1500; derived = true; }
+  if(!n) return null;
+  if(n >= 1000) return { total: n, n, derived };
+  if(!d) return null;
+  return { total: d + n, n, derived };
+}
+function inactiveReason(s){
+  const cs = String(s.course_status||'').trim().toLowerCase();
+  if(/pause|hold|discontinu|drop|complete|not created/.test(cs) && !/^active$/.test(cs)) return s.course_status;
+  const oc = String(s.outcome_status||'').trim();
+  if(oc) return oc;
+  if(s.course_completed===true || String(s.course_completed).toUpperCase()==='TRUE') return 'Course completed';
+  if(s.is_ex_sgp) return 'Moved out of SGP';
+  return '';
+}
+function isActiveStudent(s){ return !inactiveReason(s) && s.achieved !== true && s.achieved !== false; }
+function lastName(n){ const p = String(n||'').split(/\s+to\s+/i); return p[p.length-1].trim(); }
 function teamNames(roles){
   const t = (typeof RAW!=='undefined' && RAW && RAW.Team_Directory) || [];
-  return [...new Set(t.filter(x=>x.name && (!roles || roles.includes(String(x.role||'').trim()))).map(x=>String(x.name).trim()))].sort((a,b)=>a.localeCompare(b));
+  return [...new Set(t.filter(x=>x.name && (!roles || rolesOfStr(x.role).some(r => roles.includes(r)))).map(x=>String(x.name).trim()))].sort((a,b)=>a.localeCompare(b));
 }
 function optHtml(list, sel, blank){
   const l = list.slice(); if(sel && !l.includes(sel)) l.unshift(sel);
@@ -295,7 +371,27 @@ function otherSelect(id, list, label){
 function otherVal(id){ const v=document.getElementById(id).value; return v==='Other' ? (document.getElementById(id+'_o').value.trim()||'Other') : v; }
 const CANCEL_BY_OPTIONS = ['Student (personal)','Compliance: Homework not done','Compliance: Test not taken','Compliance: Error log not filled','Trainer unavailable','Ops / other'];
 const PORTION_OPTIONS = ['', '0', '25', '50', '75', '100'];
-function getWhoAmI(){ return localStorage.getItem('sgp_whoami') || ''; }
+function getWhoAmI(){ if(RAW && RAW.me && RAW.me.name) return RAW.me.name; return localStorage.getItem('sgp_whoami') || ''; }
+// ---------- Google sign-in (switched on from the sheet menu) ----------
+function getToken(){ try{ return sessionStorage.getItem('sgp_idtoken') || ''; }catch(e){ return ''; } }
+function setToken(t){ try{ if(t) sessionStorage.setItem('sgp_idtoken', t); else sessionStorage.removeItem('sgp_idtoken'); }catch(e){} }
+function loadGsi(cb, fail){
+  if(window.google && google.accounts && google.accounts.id) return cb();
+  const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+  s.onload = cb; s.onerror = fail; document.head.appendChild(s);
+}
+function showSignIn(json){
+  const el = document.getElementById('loadingState');
+  document.getElementById('tableRoot').style.display = 'none';
+  el.style.display = 'block';
+  const msg = json.error ? escHtml(json.error) : (json.expired ? 'Your sign-in expired. Please sign in again.' : 'Please sign in with your LeapScholar Google account to see your students.');
+  el.innerHTML = '<div style="max-width:460px; margin:40px auto; text-align:center;"><div style="font-size:17px; font-weight:600; margin-bottom:8px;">Sign in</div><div style="margin-bottom:16px;">'+msg+'</div><div id="gsiBtn" style="display:flex; justify-content:center;"></div><div id="gsiNote" class="sub2" style="margin-top:14px; text-transform:none; letter-spacing:normal;"></div></div>';
+  loadGsi(() => {
+    google.accounts.id.initialize({ client_id: json.client_id, auto_select: !json.error, callback: r => { setToken(r.credential); refreshData(); } });
+    google.accounts.id.renderButton(document.getElementById('gsiBtn'), { theme:'outline', size:'large', text:'signin_with' });
+    if(!json.error) google.accounts.id.prompt();
+  }, () => { document.getElementById('gsiNote').innerHTML = 'Could not load Google sign-in. A browser extension (ad blocker), a company network block, or a Chrome setting is probably stopping accounts.google.com. Try an incognito window or turn the blocker off for this page.'; });
+}
 
 // ---------- BOOT — straight into the overview, no gate ----------
 async function boot(){
@@ -313,7 +409,8 @@ async function refreshData(){
   try{
     // cache:'no-store' so a stale cached response (e.g. from before the deployment
     // was fixed) can never get served back silently - always hits Google fresh.
-    const res = await fetch(url, { cache: 'no-store' });
+    const tk = getToken();
+    const res = await fetch(url + (tk ? (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tk) : ''), { cache: 'no-store' });
     const bodyText = await res.text();
     let json;
     try{
@@ -326,14 +423,15 @@ async function refreshData(){
           : `Response wasn't valid JSON: "${bodyText.trim().slice(0,80)}"`
       );
     }
+    if(json.needs_login){ setToken(''); showSignIn(json); return; }
     if(json.error) throw new Error(json.error);
     RAW = json;
     STUDENTS = buildStudentView(RAW);
-    document.getElementById('lastSync').textContent = 'Live — synced ' + new Date().toLocaleTimeString();
+    document.getElementById('lastSync').textContent = 'Live — synced ' + new Date().toLocaleTimeString() + (RAW.me ? ' · ' + RAW.me.name + (RAW.me.viewOnly ? ' (view only)' : '') : '');
     buildStatStrip(); buildTrainerOptions(); render(); updateTodoBadge();
   } catch(err){
     document.getElementById('loadingState').innerHTML =
-      'Could not load data: ' + err.message + '<br><br><button class="btn ghost" onclick="refreshData()">Retry</button>';
+      'Could not load data: ' + escHtml(err.message) + '<div class="sub2" style="display:block; margin:10px 0; text-transform:none; letter-spacing:normal; max-width:560px;">If this keeps happening on one computer only: (1) press Ctrl+Shift+R to reload without the saved copy, (2) turn off ad blockers or privacy extensions for this page, (3) in Chrome open Settings, Privacy, and allow third-party cookies for this site, or try a new Incognito window, (4) check you are signed in to only your LeapScholar Google account in that Chrome profile.</div><button class="btn ghost" onclick="refreshData()">Retry</button>';
     return;
   }
   document.getElementById('loadingState').style.display = 'none';
@@ -475,6 +573,14 @@ function buildStudentView(rawIn){
   (raw.PTM_Log || []).forEach(c => { const s=byId[c.student_id]; if(s) s.ptm_log.push(c); });
 
   Object.values(byId).forEach(s => {
+    s.test_month = normMonth(s.test_month, s.batch_start_date);
+    // Auto goal rule: a real total score (above 800) at or above the goal counts as achieved.
+    s.goal = effGoal(s); s.review_meets_goal = false;
+    const tot = Number(s.latest_score);
+    if(s.goal && tot > 800 && tot >= s.goal.total){
+      if(s.achieved === null || s.achieved === undefined){ s.achieved = true; s.achieved_source = 'auto'; }
+      else if(s.achieved === false){ s.review_meets_goal = true; }
+    }
     // Regularity: computed from the class log, not typed in.
     const logged = s.attendance_log.length;
     const cancelled = s.attendance_log.filter(a => a.status === 'Cancelled').length;
@@ -631,7 +737,7 @@ function statusPill(s){
   if(s.is_irregular && !s.is_void_risk) out += `<span class="pill amber">Irregular</span>`;
   if(s.achieved === true) out += '<span class="pill teal">Achieved</span>';
   else if(s.is_trial_miss) out += '<span class="pill slate">Trial: NA</span>';
-  else if(s.achieved === false) out += '<span class="pill amber">Not achieved</span>';
+  else if(s.achieved === false) out += '<span class="pill amber">Not achieved</span>' + (s.review_meets_goal ? ' <span class="pill red" title="Latest score is at or above the goal, please check the Achieved flag">Score meets goal, check</span>' : '');
   else if(!out) out += `<span class="pill slate">${s.outcome_label || 'In progress'}</span>`;
   return out;
 }
@@ -643,10 +749,11 @@ function fmtScore(v){ if(v===null||v===undefined||v===''||isNaN(v)) return '—'
 // A raw "200" and a raw "1500+" mean completely different things - one's a required
 // point JUMP, the other is an absolute score to hit. Never show the bare number alone.
 function fmtTarget(s){
-  if(!s.target) return '—';
-  const n = Number(s.target_numeric);
-  if(!n) return s.target;
-  return n >= 1000 ? `Score ${s.target}` : `+${n} pt improvement`;
+  const n = targetN(s);
+  if(n) return n >= 1000 ? `Score ${n===1500?'1500+':n}` : `+${n} pt improvement`;
+  const g = effGoal(s);
+  if(g && g.derived) return (g.n >= 1000 ? 'Score 1500+' : '+' + g.n + ' pt improvement') + ' (from diagnostic)';
+  return s.target || '—';
 }
 
 function buildTabs(){
@@ -791,18 +898,9 @@ function buildOperationalRollups(){
   const collected = withScorecardEntry.filter(s => (s.scorecard_log||[]).some(c => c.collected==='TRUE'));
   const scorecardPct = withScorecardEntry.length ? Math.round(collected.length / withScorecardEntry.length * 100) : null;
 
-  const overdue = STUDENTS.filter(s => {
-    const ptms = (s.ptm_log||[]).slice().sort((a,b) => new Date(a.ptm_date||0) - new Date(b.ptm_date||0));
-    if(ptms.length){
-      const last = ptms[ptms.length-1];
-      return last.next_due_date && new Date(last.next_due_date) < today;
-    }
-    if(s.batch_start_date){
-      const start = new Date(s.batch_start_date);
-      return !isNaN(start) && (today - start) / 86400000 > 14;
-    }
-    return false;
-  });
+  // Same rule as the To-do list: active students only, so the numbers always match.
+  let overdue = [];
+  try{ const seenP = new Set(); computePending().filter(i => i.kind === 'PTM due').forEach(i => { if(!seenP.has(i.s.student_id)){ seenP.add(i.s.student_id); overdue.push(i.s); } }); }catch(e){}
 
   document.getElementById('operationalRollups').innerHTML = `
     <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px;">
@@ -816,8 +914,8 @@ function buildOperationalRollups(){
         <div style="font-size:22px; font-weight:600;">${scorecardPct!==null ? scorecardPct+'%' : '\u2014'}</div>
         <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${withScorecardEntry.length ? 'of '+withScorecardEntry.length+' with an entry' : 'none logged yet'}</div>
       </div>
-      <div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:${overdue.length ? 'var(--red-bg,#FCEBEB)' : 'var(--panel)'};">
-        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:4px;">PTM overdue</div>
+      <div style="border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:${overdue.length ? 'var(--red-bg,#FCEBEB)' : 'var(--panel)'}; ${overdue.length?'cursor:pointer;':''}" ${overdue.length?'onclick="openPtmDue()" title="Click to see who and which students"':''}>
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:4px;">PTM overdue ${overdue.length?'<span style="float:right; text-decoration:underline;">See details</span>':''}</div>
         <div style="font-size:22px; font-weight:600; ${overdue.length ? 'color:var(--red,#B42318);' : ''}">${overdue.length}</div>
         <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${overdue.length ? overdue.slice(0,3).map(s=>s.name).join(', ') + (overdue.length>3?` +${overdue.length-3} more`:'') : 'none overdue'}</div>
       </div>
@@ -1096,27 +1194,245 @@ function computePending(){
 }
 
 let pendingRole = 'All';
-function openPending(){ renderPending(); document.getElementById('drillOverlay').classList.add('open'); }
-function setPendingRole(r){ pendingRole = r; renderPending(); }
+let pendingWho = new Set();
+let pendingKinds = new Set();
+let pendingFilterOpen = false;
+let pendingSearch = '';
+function openPendingFresh(){ pendingRole = 'All'; pendingWho = new Set(); pendingKinds = new Set(); pendingFilterOpen = false; pendingSearch = ''; openPending(); }
+function openPtmDue(){ pendingRole = 'SSM'; pendingWho = new Set(); pendingKinds = new Set(['PTM due']); pendingFilterOpen = false; pendingSearch = ''; openPending(); }
+function downloadPendingCsv(){
+  let list = computePending().filter(i => pendingRole==='All' || i.role===pendingRole);
+  if(pendingWho.size) list = list.filter(i => pendingPeople(i).some(p => pendingWho.has(p)));
+  if(pendingKinds.size) list = list.filter(i => pendingKinds.has(i.kind));
+  downloadCsv('todo_'+new Date().toISOString().slice(0,10)+'.csv', [['Role','Person','Student','Item','Detail','Batch start','Target test date']].concat(list.map(i => [i.role, i.who, i.s.name, i.kind, String(i.text).replace(/<[^>]+>/g,''), i.s.batch_start_date?String(i.s.batch_start_date).slice(0,10):'', i.s.target_test_date?String(i.s.target_test_date).slice(0,10):''])));
+}
+function openPending(){
+  try{ renderPending(); }
+  catch(e){ document.getElementById('drillPanel').innerHTML = '<div style="padding:14px;">Could not build the to-do list: '+escHtml(e.message)+'<br><br><button class="btn ghost small" onclick="closeDrill()">Close</button></div>'; }
+  document.getElementById('drillOverlay').classList.add('open');
+}
+function setPendingRole(r){ pendingRole = r; pendingWho = new Set(); safeRenderPending(); }
+function safeRenderPending(){ try{ renderPending(); }catch(e){ document.getElementById('drillPanel').innerHTML='<div style="padding:14px;">Could not build the to-do list: '+escHtml(e.message)+'</div>'; } }
+function pendingToggle(name, on){ if(on) pendingWho.add(name); else pendingWho.delete(name); safeRenderPending(); }
+function pendingKindToggle(k, on){ if(on) pendingKinds.add(k); else pendingKinds.delete(k); safeRenderPending(); }
+function pendingClear(){ pendingWho = new Set(); pendingKinds = new Set(); safeRenderPending(); }
+function pendingPeople(list){ return String(list.who||'').split(' / ').map(x=>x.trim()).filter(Boolean); }
 function renderPending(){
   const all = computePending();
   const roles = ['All','Trainer','SSM','Ops'];
-  const list = all.filter(i => pendingRole==='All' || i.role===pendingRole);
+  let list = all.filter(i => pendingRole==='All' || i.role===pendingRole);
+  const people = {}; list.forEach(i => pendingPeople(i).forEach(p => { people[p] = (people[p]||0) + 1; }));
+  const kindsCount = {}; list.forEach(i => { kindsCount[i.kind] = (kindsCount[i.kind]||0) + 1; });
+  if(pendingWho.size) list = list.filter(i => pendingPeople(i).some(p => pendingWho.has(p)));
+  if(pendingKinds.size) list = list.filter(i => pendingKinds.has(i.kind));
   const byWho = {};
   list.forEach(i => { (byWho[i.role+' · '+i.who] = byWho[i.role+' · '+i.who] || []).push(i); });
   const body = Object.keys(byWho).sort().map(k => `
-    <div class="section-title" style="margin-top:14px;">${k} <span class="sub2">${byWho[k].length}</span></div>
+    <div class="section-title" style="margin-top:14px;">${escHtml(k)} <span class="sub2">${byWho[k].length}</span></div>
     ${byWho[k].slice(0,200).map(i => `<div class="comment-item" style="cursor:pointer;" onclick="closeDrill(); openPanel(STUDENTS.find(x=>x.student_id==='${i.s.student_id}'))">
-      <div class="txt"><b>${i.s.name}</b> <span class="pill ${i.kind.includes('due')?'amber':'slate'}">${i.kind}</span></div><div class="meta">${i.text}</div></div>`).join('')}`).join('');
+      <div class="txt"><b>${escHtml(i.s.name)}</b> <span class="pill ${i.kind.includes('due')?'amber':'slate'}">${i.kind}</span></div><div class="meta">${i.text}</div></div>`).join('')}`).join('');
+  const q = pendingSearch.trim().toLowerCase();
+  const names = Object.keys(people).sort((a,b)=>a.localeCompare(b)).filter(n => !q || n.toLowerCase().includes(q));
+  const chk = (name, checked, fn, extra) => `<label style="display:flex; align-items:center; gap:6px; font-size:12.5px; padding:2px 0; cursor:pointer; text-transform:none; letter-spacing:normal; font-weight:400; margin:0;"><input type="checkbox" style="width:auto; margin:0;" ${checked?'checked':''} onchange="${fn}(this.dataset.n, this.checked)" data-n="${escHtml(name)}"> ${escHtml(name)} ${extra||''}</label>`;
+  const filterBox = `<div style="margin:6px 0 8px; border:1px solid var(--line, #ddd); border-radius:8px; padding:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="pendingFilterOpen=!pendingFilterOpen; safeRenderPending()">
+        <span style="font-size:13px; font-weight:600;">Filter by people ${pendingWho.size?'<span class="pill teal">'+pendingWho.size+' selected</span>':'<span class="sub2" style="text-transform:none;">(all)</span>'}</span>
+        <span>${pendingFilterOpen?'&#9650;':'&#9660;'}</span></div>
+      ${pendingFilterOpen ? `
+        <div style="display:flex; gap:6px; margin:6px 0;">
+          <input type="text" placeholder="Search a name" value="${escHtml(pendingSearch)}" oninput="pendingSearch=this.value; safeRenderPending(); setTimeout(()=>{const e=document.getElementById('pendSearchBox'); if(e){e.focus(); e.setSelectionRange(e.value.length,e.value.length);}},0)" id="pendSearchBox" style="flex:1;">
+          <button class="btn ghost small" onclick="names_all_pending()">Select shown</button>
+          <button class="btn ghost small" onclick="pendingClear()">Clear</button></div>
+        <div style="max-height:170px; overflow:auto; columns:2; column-gap:12px;">${names.map(n => chk(n, pendingWho.has(n), 'pendingToggle', '<span class="sub2">('+people[n]+')</span>')).join('') || '<div class="sub2">No names</div>'}</div>
+        <div style="font-size:13px; font-weight:600; margin:8px 0 2px;">Type of pending item</div>
+        <div style="display:flex; flex-wrap:wrap; gap:4px 14px;">${Object.keys(kindsCount).sort().map(k => chk(k, pendingKinds.has(k), 'pendingKindToggle', '<span class="sub2">('+kindsCount[k]+')</span>')).join('')}</div>` : ''}
+    </div>`;
+  window.__pendingShown = names;
   document.getElementById('drillPanel').innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
-      <span style="font-size:16px; font-weight:600;">To-do: what is left <span class="sub2">(${list.length})</span></span>
+      <span style="font-size:16px; font-weight:600;">${(pendingKinds.size===1 && pendingKinds.has('PTM due')) ? 'PTM overdue: SSM and students' : 'To-do: what is left'} <span class="sub2">(${list.length})</span></span>
       <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span>
     </div>
     <div style="display:flex; gap:6px; margin-bottom:6px;">${roles.map(r => `<div class="entry-type-opt ${r===pendingRole?'active':''}" onclick="setPendingRole('${r}')">${r} (${all.filter(i=>r==='All'||i.role===r).length})</div>`).join('')}</div>
+    ${filterBox}
     <div class="sub2" style="display:block; margin-bottom:8px; text-transform:none; letter-spacing:normal;">Class entries are checked for the last 14 days against each student's batch days. Mark holidays or breaks as "no class" so they do not show here.</div>
-    ${body || '<div class="placeholder-box">Nothing pending.</div>'}`;
+    ${body || '<div class="placeholder-box">Nothing pending.</div>'}
+    <div style="margin-top:12px;"><button class="btn ghost small" onclick="downloadPendingCsv()">Download as CSV</button></div>`;
 }
+function names_all_pending(){ (window.__pendingShown||[]).forEach(n => pendingWho.add(n)); safeRenderPending(); }
+
+// ---------- WORKLOAD VIEW (teacher wise, active students only) ----------
+let workloadBy = 'trainer';
+function setWorkloadBy(v){ workloadBy = v; renderWorkload(); }
+function openWorkload(){
+  try{ renderWorkload(); }
+  catch(e){ document.getElementById('drillPanel').innerHTML = '<div style="padding:14px;">Could not build the workload view: '+escHtml(e.message)+'<br><br><button class="btn ghost small" onclick="closeDrill()">Close</button></div>'; }
+  document.getElementById('drillOverlay').classList.add('open');
+}
+function workloadMonth(s){
+  const m = normMonth(s.test_month, s.batch_start_date);
+  if(/^[A-Z]{3} \d{4}$/.test(m)) return m;
+  if(s.target_test_date){ const d = new Date(s.target_test_date); if(!isNaN(d)) return MON3[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  return 'Month not set';
+}
+function renderWorkload(){
+  const rows = {};   // person -> {active:[], other:[], math:0, english:0, months:{}}
+  const get = p => rows[p] = rows[p] || { active:[], other:[], math:0, english:0, months:{} };
+  STUDENTS.forEach(s => {
+    if(isHiddenRow(s)) return;
+    const act = isActiveStudent(s);
+    const tag = [];
+    if(workloadBy==='trainer'){
+      if(s.math_trainer) tag.push([lastName(s.math_trainer),'math']);
+      if(s.english_trainer) tag.push([lastName(s.english_trainer),'english']);
+      if(!tag.length) tag.push(['(no trainer set)','none']);
+    } else tag.push([s.ssm ? lastName(s.ssm) : '(no SSM set)', 'ssm']);
+    const seen = new Set();
+    tag.forEach(([p,sub]) => {
+      const r = get(p);
+      if(act){
+        if(!seen.has(p)){ r.active.push(s); const mo = workloadMonth(s); (r.months[mo] = r.months[mo] || []).push(s); seen.add(p); }
+        if(sub==='math') r.math++; if(sub==='english') r.english++;
+      } else if(!seen.has(p+'|o')){ r.other.push(s); seen.add(p+'|o'); }
+    });
+  });
+  const allMonths = [...new Set(Object.values(rows).flatMap(r => Object.keys(r.months)))].sort((a,b)=>monthSortKey(a)-monthSortKey(b));
+  const people = Object.keys(rows).sort((a,b)=>rows[b].active.length-rows[a].active.length || a.localeCompare(b));
+  const gid = (list) => registerDrillGroup(list);
+  const totalActive = STUDENTS.filter(isActiveStudent).length;
+  const html = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+      <span style="font-size:16px; font-weight:600;">Workload: active students <span class="sub2">(${totalActive} active in total)</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span></div>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <div class="entry-type-opt ${workloadBy==='trainer'?'active':''}" onclick="setWorkloadBy('trainer')">By trainer</div>
+      <div class="entry-type-opt ${workloadBy==='ssm'?'active':''}" onclick="setWorkloadBy('ssm')">By SSM</div></div>
+    <div class="sub2" style="display:block; margin-bottom:8px; text-transform:none; letter-spacing:normal;">Active means the result is still awaited and the course is not paused, on hold, discontinued, completed or moved out of SGP. Months are the target test month. Click a number to see the students.</div>
+    <div style="overflow:auto;"><table class="tbl" style="width:100%; font-size:12.5px; border-collapse:collapse;">
+      <thead><tr><th style="text-align:left;">${workloadBy==='trainer'?'Trainer':'SSM'}</th><th>Active</th>${workloadBy==='trainer'?'<th>Math</th><th>English</th>':''}${allMonths.map(m=>`<th>${m}</th>`).join('')}<th>Paused / dropped / done</th></tr></thead>
+      <tbody>${people.map(p => { const r = rows[p]; return `<tr style="border-top:1px solid #eee;">
+        <td><b>${escHtml(p)}</b></td>
+        <td style="text-align:center; cursor:pointer; font-weight:600;" onclick="showDrill('${escHtml(p).replace(/'/g,"\\'")}: active students', __drillGroups['${gid(r.active)}'])">${r.active.length}</td>
+        ${workloadBy==='trainer'?`<td style="text-align:center;">${r.math}</td><td style="text-align:center;">${r.english}</td>`:''}
+        ${allMonths.map(m => { const l = r.months[m]; return `<td style="text-align:center; ${l?'cursor:pointer;':'color:#bbb;'}" ${l?`onclick="showDrill('${escHtml(p).replace(/'/g,"\\'")}: ${m}', __drillGroups['${gid(l)}'])"`:''}>${l?l.length:'·'}</td>`; }).join('')}
+        <td style="text-align:center; ${r.other.length?'cursor:pointer;':'color:#bbb;'}" ${r.other.length?`onclick="showDrill('${escHtml(p).replace(/'/g,"\\'")}: not active', __drillGroups['${gid(r.other)}'])"`:''}>${r.other.length||'·'}</td></tr>`; }).join('')}</tbody></table></div>
+    <div style="margin-top:10px;"><button class="btn ghost small" onclick="downloadWorkloadCsv()">Download as CSV</button></div>`;
+  window.__workloadCsv = { people, rows, allMonths };
+  document.getElementById('drillPanel').innerHTML = html;
+}
+function csvCell(v){ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function downloadCsv(name, rows){
+  const blob = new Blob(['﻿'+rows.map(r=>r.map(csvCell).join(',')).join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();}, 500);
+}
+function downloadWorkloadCsv(){
+  const w = window.__workloadCsv; if(!w) return;
+  const head = [workloadBy==='trainer'?'Trainer':'SSM','Active','Math','English'].concat(w.allMonths, ['Paused / dropped / done']);
+  const out = [head];
+  w.people.forEach(p => { const r = w.rows[p]; out.push([p, r.active.length, r.math, r.english].concat(w.allMonths.map(m => (r.months[m]||[]).length), [r.other.length])); });
+  downloadCsv('workload_'+workloadBy+'_'+new Date().toISOString().slice(0,10)+'.csv', out);
+}
+
+// ---------- APPRAISAL VIEW (date range per person) ----------
+let apprCtx = { role:'Trainer', person:'', from:'', to:'', secondary:false };
+function openAppraisal(){
+  if(!apprCtx.from){ const t = new Date(); const f = new Date(t.getTime() - 180*86400000); apprCtx.from = ymd(f)+'T00:00'; apprCtx.to = ymd(t)+'T23:59'; }
+  try{ renderAppraisal(); }
+  catch(e){ document.getElementById('drillPanel').innerHTML = '<div style="padding:14px;">Could not build the appraisal view: '+escHtml(e.message)+'<br><br><button class="btn ghost small" onclick="closeDrill()">Close</button></div>'; }
+  document.getElementById('drillOverlay').classList.add('open');
+}
+function apprPeople(){
+  if(apprCtx.role==='SSM') return [...new Set(STUDENTS.map(s=>s.ssm).filter(Boolean).map(lastName))].sort((a,b)=>a.localeCompare(b));
+  const set = new Set();
+  (RAW.Trainer_History||[]).forEach(t => { if(!isHiddenRow(t) && t.trainer_name) set.add(lastName(t.trainer_name)); });
+  STUDENTS.forEach(s => { if(s.math_trainer) set.add(lastName(s.math_trainer)); if(s.english_trainer) set.add(lastName(s.english_trainer)); });
+  return [...set].sort((a,b)=>a.localeCompare(b));
+}
+function apprRows(){
+  const from = new Date(apprCtx.from), to = new Date(apprCtx.to);
+  if(!apprCtx.person || isNaN(from) || isNaN(to)) return [];
+  const byId = {}; STUDENTS.forEach(s => byId[s.student_id] = s);
+  const out = [];
+  if(apprCtx.role==='SSM'){
+    STUDENTS.forEach(s => {
+      if(!s.ssm || lastName(s.ssm)!==apprCtx.person) return;
+      const bs = s.batch_start_date ? new Date(s.batch_start_date) : null;
+      if(bs && !isNaN(bs) && bs > to) return;
+      out.push({ s, subject:'SSM', start: s.batch_start_date ? String(s.batch_start_date).slice(0,10) : '', end:'' });
+    });
+    return out;
+  }
+  const seen = new Set();
+  (RAW.Trainer_History||[]).forEach(t => {
+    if(isHiddenRow(t) || lastName(t.trainer_name)!==apprCtx.person) return;
+    const s = byId[t.student_id]; if(!s) return;
+    if(!apprCtx.secondary && /secondary/i.test(String(t.role||''))) return;
+    const st = t.start_date ? new Date(t.start_date) : (s.batch_start_date ? new Date(s.batch_start_date) : null);
+    const en = t.end_date ? new Date(t.end_date) : null;
+    if(st && !isNaN(st) && st > to) return;
+    if(en && !isNaN(en) && en < from) return;
+    const key = t.student_id+'|'+t.subject+'|'+(t.start_date||'')+'|'+(t.end_date||'');
+    if(seen.has(key)) return; seen.add(key);
+    out.push({ s, subject: t.subject + (/secondary/i.test(String(t.role||''))?' (secondary)':''), start: st&&!isNaN(st)?ymd(st):'', end: en&&!isNaN(en)?ymd(en):'' });
+  });
+  // Students whose current trainer has no history row yet
+  STUDENTS.forEach(s => {
+    [['Math',s.math_trainer],['English',s.english_trainer]].forEach(([sub,tn]) => {
+      if(!tn || lastName(tn)!==apprCtx.person) return;
+      if(out.some(o => o.s.student_id===s.student_id && o.subject.startsWith(sub))) return;
+      const bs = s.batch_start_date ? new Date(s.batch_start_date) : null;
+      if(bs && !isNaN(bs) && bs > to) return;
+      out.push({ s, subject: sub, start: bs&&!isNaN(bs)?ymd(bs):'', end:'' });
+    });
+  });
+  return out;
+}
+function apprStatus(s){ const r = inactiveReason(s); if(r) return r; return s.achieved===true ? 'Goal achieved' : (s.achieved===false ? 'Goal not achieved' : 'In progress'); }
+function apprSet(k, v){ apprCtx[k] = v; if(k==='role') apprCtx.person=''; renderAppraisal(); }
+function renderAppraisal(){
+  const rows = apprRows();
+  const uniq = new Set(rows.map(r => r.s.student_id));
+  const people = apprPeople();
+  const resultCount = { ach:0, notach:0, prog:0, other:0 };
+  const seenS = new Set();
+  rows.forEach(r => { if(seenS.has(r.s.student_id)) return; seenS.add(r.s.student_id);
+    const st = apprStatus(r.s); if(st==='Goal achieved') resultCount.ach++; else if(st==='Goal not achieved') resultCount.notach++; else if(st==='In progress') resultCount.prog++; else resultCount.other++; });
+  rows.sort((a,b)=>String(a.s.name).localeCompare(String(b.s.name)));
+  document.getElementById('drillPanel').innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+      <span style="font-size:16px; font-weight:600;">Appraisal view</span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span></div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <div><label>Person type</label><select onchange="apprSet('role', this.value)"><option ${apprCtx.role==='Trainer'?'selected':''}>Trainer</option><option ${apprCtx.role==='SSM'?'selected':''}>SSM</option></select></div>
+      <div><label>Person</label><select onchange="apprSet('person', this.value)">${optHtml(people, apprCtx.person, '— Select —')}</select></div>
+      <div><label>From (date and time)</label><input type="datetime-local" value="${apprCtx.from}" onchange="apprSet('from', this.value)"></div>
+      <div><label>To (date and time)</label><input type="datetime-local" value="${apprCtx.to}" onchange="apprSet('to', this.value)"></div>
+    </div>
+    ${apprCtx.role==='Trainer'?`<label style="display:flex; gap:6px; align-items:center; text-transform:none; letter-spacing:normal; font-weight:400; margin-top:6px;"><input type="checkbox" style="width:auto; margin:0;" ${apprCtx.secondary?'checked':''} onchange="apprSet('secondary', this.checked)"> Include secondary trainer assignments</label>`:''}
+    <div class="sub2" style="display:block; margin:8px 0; text-transform:none; letter-spacing:normal;">${apprCtx.role==='Trainer'
+      ? 'A student counts if the person was their trainer for any part of this period (based on the trainer history start and end dates). Time of day is only used if a date has a time in it.'
+      : 'SSM changes are not dated in the tracker, so this shows students currently under this SSM whose batch started on or before the end date.'}</div>
+    ${apprCtx.person ? `
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px;">
+        <span class="pill teal">${uniq.size} student${uniq.size===1?'':'s'} handled</span>
+        <span class="pill teal">${resultCount.ach} goal achieved</span><span class="pill amber">${resultCount.notach} not achieved</span>
+        <span class="pill slate">${resultCount.prog} in progress</span><span class="pill slate">${resultCount.other} paused / done / other</span></div>
+      <div style="overflow:auto;"><table class="tbl" style="width:100%; font-size:12.5px; border-collapse:collapse;">
+        <thead><tr><th style="text-align:left;">Student</th><th>${apprCtx.role==='SSM'?'Role':'Subject'}</th><th>With them from</th><th>Until</th><th>Course</th><th>Batch start</th><th>Target</th><th>Test month</th><th>Diagnostic</th><th>Latest score</th><th>Status</th></tr></thead>
+        <tbody>${rows.map(r => `<tr style="border-top:1px solid #eee; cursor:pointer;" onclick="closeDrill(); openPanel(STUDENTS.find(x=>x.student_id==='${r.s.student_id}'))">
+          <td><b>${escHtml(r.s.name)}</b></td><td>${escHtml(r.subject)}</td><td>${r.start||'—'}</td><td>${r.end||'ongoing'}</td>
+          <td>${escHtml(r.s.course_type||'—')}</td><td>${r.s.batch_start_date?String(r.s.batch_start_date).slice(0,10):'—'}</td><td>${escHtml(fmtTarget(r.s))}</td>
+          <td>${escHtml(r.s.test_month||'—')}</td><td>${escHtml(r.s.diag_score||'—')}</td><td>${escHtml(r.s.latest_score||'—')}</td><td>${escHtml(apprStatus(r.s))}</td></tr>`).join('') || '<tr><td colspan="11" class="sub2">No students found for this period.</td></tr>'}</tbody></table></div>
+      <div style="margin-top:10px;"><button class="btn ghost small" onclick="downloadApprCsv()">Download as CSV</button></div>`
+    : '<div class="placeholder-box">Pick a person and a date range.</div>'}`;
+}
+function downloadApprCsv(){
+  const rows = apprRows().sort((a,b)=>String(a.s.name).localeCompare(String(b.s.name)));
+  const out = [['Student','Subject / role','With them from','Until','Course','Batch start','Target','Test month','Diagnostic','Latest score','Status','Primary Math trainer','Primary English trainer','SSM']];
+  rows.forEach(r => out.push([r.s.name, r.subject, r.start, r.end||'ongoing', r.s.course_type||'', r.s.batch_start_date?String(r.s.batch_start_date).slice(0,10):'', fmtTarget(r.s), r.s.test_month||'', r.s.diag_score||'', r.s.latest_score||'', apprStatus(r.s), r.s.math_trainer||'', r.s.english_trainer||'', r.s.ssm||'']));
+  downloadCsv('appraisal_'+apprCtx.person.replace(/\s+/g,'_')+'_'+apprCtx.from.slice(0,10)+'_to_'+apprCtx.to.slice(0,10)+'.csv', out);
+}
+
 function updateTodoBadge(){
   try{
     const n = computePending().length, el = document.getElementById('todoCount');
@@ -1143,11 +1459,9 @@ function trackerDuePeriods(s, today){
   return out;
 }
 function targetScoreText(s){
-  const n = Number(s.target_numeric);
-  if(!n) return s.target || '';
-  if(n >= 1000) return String(n);
-  const d = Number(s.diag_score);
-  return d ? String(d + n) : ('+' + n + ' points');
+  const g = effGoal(s);
+  if(g) return g.n >= 1000 ? (g.n===1500?'1500+':String(g.n)) : String(g.total);
+  return s.target || '';
 }
 function prettyDate(v){
   if(!v) return '';
@@ -1245,6 +1559,73 @@ async function downloadTrackerPdf(trackerId){
     else alert('Could not create the PDF: ' + err.message);
   }
   document.body.removeChild(holder);
+}
+
+let trackerCtx = null;
+function openTracker(sid, trackerId){
+  const s = STUDENTS.find(x => x.student_id === sid); if(!s) return;
+  trackerCtx = { sid, trackerId: trackerId || null };
+  renderTrackerModal();
+  document.getElementById('logOverlay').classList.add('open');
+}
+function renderTrackerModal(){
+  const s = STUDENTS.find(x => x.student_id === trackerCtx.sid);
+  const who = getWhoAmI(); const modal = document.getElementById('logModal');
+  if(!who){
+    const teamList = (RAW && RAW.Team_Directory || []);
+    modal.innerHTML = `<h3>Who are you?</h3><div class="step-sub">So the tracker is attributed to you.</div>
+      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${roleLabel(t.role)})</option>`).join('')}</select>
+      <div class="log-modal-actions"><button class="btn ghost small" onclick="closeLogModal()">Cancel</button><button class="btn small" onclick="confirmWhoAmI()">Continue</button></div>`;
+    return;
+  }
+  const tr = trackerCtx.trackerId ? (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerCtx.trackerId) : null;
+  const myBox = (who && s.english_trainer && who.toLowerCase()===s.english_trainer.toLowerCase()) ? 'English' : 'Math';
+  const periods = ['Day 30','Day 60','Other'];
+  const curPeriod = tr ? tr.period_label : 'Day 30';
+  modal.innerHTML = `<h3>Progress tracker: ${escHtml(s.name)}</h3>
+    <div class="step-sub">Math trainer fills the Math box, English trainer fills the English box. Anyone can download and mark it sent once both are filled.</div>
+    <label>Period</label>
+    <select id="tk_period" ${tr?'disabled':''}>${periods.map(p=>`<option ${p===curPeriod||(!periods.includes(curPeriod)&&p==='Other')?'selected':''}>${p}</option>`).join('')}</select>
+    <input type="text" id="tk_custom" placeholder="Name for this tracker (e.g. Mid-course update)" value="${tr && !periods.includes(tr.period_label) ? escHtml(tr.period_label) : ''}" style="margin-top:6px;" ${tr?'disabled':''}>
+    <label>Regularity / Punctuality line (auto-filled, you can change it)</label>
+    <textarea id="tk_reg" style="min-height:50px;">${escHtml((tr&&tr.regularity_note)||autoRegularity(s))}</textarea>
+    <label>I am filling the</label>
+    <select id="tk_box" onchange="trackerBoxChanged()"><option ${myBox==='Math'?'selected':''}>Math</option><option ${myBox==='English'?'selected':''}>English</option></select>
+    <label id="tk_label">Comments of ${myBox} Instructor</label>
+    <textarea id="tk_text" style="min-height:180px;" placeholder="Syllabus done, drill accuracy, concerns, further course of action, student action plan, target for next test. Start a line with - for a bullet. Use **bold** for emphasis."></textarea>
+    <div class="meta" id="tk_other" style="margin-top:6px;"></div>
+    <div class="log-modal-actions">
+      <button class="btn ghost small" onclick="closeLogModal()">Cancel</button>
+      <button class="btn small" id="tkSaveBtn" onclick="saveTrackerBox()">Save</button>
+    </div><div class="save-status" id="logSaveStatus"></div>`;
+  trackerBoxChanged();
+}
+function trackerBoxChanged(){
+  const box = document.getElementById('tk_box').value.toLowerCase();
+  const tr = trackerCtx.trackerId ? (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerCtx.trackerId) : null;
+  document.getElementById('tk_label').textContent = 'Comments of ' + (box==='math'?'Maths':'English') + ' Instructor';
+  document.getElementById('tk_text').value = tr ? boxText(tr, box) : '';
+  const other = box==='math' ? 'english' : 'math';
+  document.getElementById('tk_other').textContent = tr && tr[other+'_filled_by'] ? `The ${other==='math'?'Math':'English'} box was filled by ${tr[other+'_filled_by']}.` : `The ${other==='math'?'Math':'English'} box is still empty.`;
+}
+async function saveTrackerBox(){
+  const s = STUDENTS.find(x => x.student_id === trackerCtx.sid);
+  const box = document.getElementById('tk_box').value;
+  const text = document.getElementById('tk_text').value.trim();
+  let period = trackerCtx.trackerId ? null : document.getElementById('tk_period').value;
+  if(period === 'Other') period = document.getElementById('tk_custom').value.trim() || 'Update';
+  if(!text){ document.getElementById('logSaveStatus').className='save-status fail'; document.getElementById('logSaveStatus').textContent='The box is empty.'; return; }
+  const btn = document.getElementById('tkSaveBtn'); btn.disabled = true;
+  try{
+    const payload = { action:'save_tracker_box', student_id:s.student_id, student_name:s.name, subject:box, box_fields:{text}, regularity_note: document.getElementById('tk_reg').value.trim(), target_test_date: s.target_test_date||'' };
+    if(trackerCtx.trackerId) payload.record_id = trackerCtx.trackerId; else payload.period_label = period;
+    await postAction(payload);
+    await refreshData(); closeLogModal();
+    const st = STUDENTS.find(x => x.student_id === s.student_id); if(st) openPanel(st);
+  } catch(err){
+    document.getElementById('logSaveStatus').className='save-status fail';
+    document.getElementById('logSaveStatus').textContent='Could not save: '+err.message; btn.disabled = false;
+  }
 }
 async function markTrackerSent(trackerId){
   if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first.'); return; }
@@ -1405,7 +1786,7 @@ function openPanel(s){
   const trainerHistoryHtml = (s.trainer_history_log||[]).slice().reverse().map(t =>
     `<div class="comment-item"><div class="txt">${t.subject} — <b>${t.trainer_name}</b>${!t.end_date?' <span class="pill teal">Current</span>':''}</div><div class="meta">${t.start_date?t.start_date.toString().slice(0,10):'—'} → ${t.end_date?t.end_date.toString().slice(0,10):'present'}${t.reason?' — '+t.reason:''}</div></div>`).join('');
   const attemptHistoryHtml = (s.attempt_history||[]).slice().reverse().map(a =>
-    `<div class="comment-item"><div class="txt">${a.attempt_type||'—'}${a.test_month?' — '+a.test_month:''} — target ${a.target||'—'}</div><div class="meta">Diag ${a.diagnostic_score||'—'} → Score ${a.attempt_score||'—'} — ${a.achieved==='TRUE'?'Achieved':(a.achieved==='FALSE'?'Not achieved':'Pending')}</div></div>`).join('');
+    `<div class="comment-item"><div class="txt">${a.attempt_type||'—'}${a.test_month?' — '+normMonth(a.test_month, s.batch_start_date):''} — target ${a.target||'—'}</div><div class="meta">Diag ${a.diagnostic_score||'—'} → Score ${a.attempt_score||'—'} — ${a.achieved==='TRUE'?'Achieved':(a.achieved==='FALSE'?'Not achieved':'Pending')}</div></div>`).join('');
   const ptmHtml = (s.ptm_log||[]).slice().reverse().map(p =>
     `<div class="comment-item">${itemActions('PTM_Log',p)}<div class="txt">${(p.ptm_date||'').toString().slice(0,10)} — ${p.notes||'(no notes)'}${p.doc_link?' &middot; <a href="'+p.doc_link+'" target="_blank">MOM doc</a>':''}</div><div class="meta">— ${p.conducted_by||p.entered_by||''}, next due ${(p.next_due_date||'').toString().slice(0,10)}${p.mom_sent_by?' &middot; MOM sent by '+p.mom_sent_by:''}${editedTag(p)}</div></div>`).join('');
   const referralHtml = (s.referral_log||[]).slice().reverse().map(r =>
@@ -1553,7 +1934,7 @@ function renderLogModal(){
       <h3>Who are you?</h3>
       <div class="step-sub">So this entry is correctly attributed. Not a password — just remembered on this device.</div>
       <label>Pick your name</label>
-      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${t.role})</option>`).join('')}</select>
+      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${roleLabel(t.role)})</option>`).join('')}</select>
       <div class="tiny-link" onclick="document.getElementById('whoEmailWrap').style.display='block'">Not on the list? Type your email instead</div>
       <div id="whoEmailWrap" style="display:none; margin-top:8px;">
         <input id="whoEmail" type="text" placeholder="you@leapscholar.com">
@@ -1569,7 +1950,7 @@ function renderLogModal(){
 
   modal.innerHTML = `
     <h3>Log entry</h3>
-    <div class="step-sub">Logging as <b>${who}</b> &middot; <span class="tiny-link" onclick="localStorage.removeItem('sgp_whoami'); renderLogModal();">switch</span></div>
+    <div class="step-sub">Logging as <b>${who}</b> &middot; ${RAW&&RAW.me?'':'<span class="tiny-link" onclick="localStorage.removeItem(\'sgp_whoami\'); renderLogModal();">switch</span>'}</div>
 
     ${logEntryType !== 'newstudent' ? `
     <div class="picked-student ${logPickedStudent ? 'open' : ''}" id="pickedStudentBox">
@@ -1632,6 +2013,7 @@ function classStatusChanged(){
   document.getElementById('f_heldwrap').style.display = st==='Held' ? 'block' : 'none';
 }
 function setLogEntryType(t){
+  if(t==='trainerchange' && !canChangeTrainer()){ alert(NO_TRAINER_CHANGE_MSG); return; }
   logEntryType = t;
   renderLogModal();
 }
@@ -1736,7 +2118,7 @@ function renderLogFormFields(){
   if(logEntryType === 'trainerchange'){
     return `
       <label>Subject</label><select id="f_tcsubject"><option>Math</option><option>English</option></select>
-      <label>New trainer name</label><select id="f_tcname">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select trainer —')}</select>
+      <label>New trainer name</label><select id="f_tcname">${optHtml(teamNames(TRAINER_ROLES_LIST),'','— Select trainer —')}</select>
       <label>Reason for change</label><input type="text" id="f_tcreason" placeholder="e.g. Trainer left, workload rebalance">
       <div class="placeholder-box" style="margin-top:6px;">The previous trainer's assignment is kept, not erased - it gets an end date so the new trainer can see who taught this student before and how they were performing.</div>`;
   }
@@ -1755,8 +2137,8 @@ function renderLogFormFields(){
       <label>Phone</label><input type="text" id="f_phone" placeholder="+971...">
       <label>Batch start date</label><input type="date" id="f_batchstart">
       <label>Course type</label><select id="f_coursetype"><option>SGP</option><option>Non-SGP</option></select>
-      <label>Math trainer</label><select id="f_mathtrainer">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select Math trainer —')}</select>
-      <label>English trainer</label><select id="f_engtrainer">${optHtml(teamNames(['Trainer','Pod Leader']),'','— Select English trainer —')}</select>
+      <label>Math trainer</label><select id="f_mathtrainer">${optHtml(teamNames(TRAINER_ROLES_LIST),'','— Select Math trainer —')}</select>
+      <label>English trainer</label><select id="f_engtrainer">${optHtml(teamNames(TRAINER_ROLES_LIST),'','— Select English trainer —')}</select>
       <label>SSM</label><select id="f_ssm">${optHtml(teamNames(['SSM']),'','— Select SSM —')}</select>
       <label>Target</label><select id="f_target">${optHtml(TARGET_OPTIONS.slice(1),'','— Select target —')}</select>
       <label>Total hours allocated (optional)</label><input type="number" id="f_hours" placeholder="e.g. 40">
@@ -1795,6 +2177,7 @@ async function postAction(payload){
   const url = getApiUrl();
   payload.entered_by = getWhoAmI();
   payload.edited_by = payload.entered_by;
+  if(getToken()) payload.token = getToken();
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -1934,6 +2317,7 @@ async function submitLogEntry(){
       payload.attempt_score = document.getElementById('f_atscore').value;
       payload.achieved = document.getElementById('f_atachieved').value;
     } else if(logEntryType === 'trainerchange'){
+      if(!canChangeTrainer()) throw new Error(NO_TRAINER_CHANGE_MSG);
       payload.action = 'log_trainer_change';
       payload.subject = document.getElementById('f_tcsubject').value;
       payload.trainer_name = document.getElementById('f_tcname').value.trim();
@@ -1977,7 +2361,7 @@ function renderEditStudent(){
   const txt = (k,l,ph) => `<label>${l}</label><input type="text" id="es_${k}" value="${String(s[k]==null?'':s[k]).replace(/"/g,'&quot;')}" placeholder="${ph||''}">`;
   const num = (k,l) => `<label>${l}</label><input type="number" step="any" id="es_${k}" value="${s[k]==null?'':s[k]}">`;
   const dt  = (k,l) => `<label>${l}</label><input type="date" id="es_${k}" value="${d10(s[k])}">`;
-  const trainers = teamNames(['Trainer','Pod Leader']);
+  const trainers = teamNames(TRAINER_ROLES_LIST);
   modal.innerHTML = `<h3>Edit details: ${s.name}</h3>
     <div class="step-sub">Editing as <b>${who}</b>. Change only what is wrong or missing. Every change is saved in the Audit_Log tab with the old value.</div>
     ${txt('name','Student name *')}
@@ -1985,12 +2369,13 @@ function renderEditStudent(){
     ${txt('parent_email','Parent email')}
     ${txt('phone','Phone')}
     <label>Course type</label><select id="es_course_type">${optHtml(['SGP','Non-SGP'], (s.course_type||'').trim(), '— Select —')}</select>
+    <label>Course status</label><select id="es_course_status">${optHtml(COURSE_STATUS_OPTIONS, (s.course_status||'').trim(), '— Not set —')}</select>
     ${dt('batch_start_date','Batch start date')}
     ${dt('target_test_date','Target test date')}
     ${dt('validity_end_date','Valid until')}
-    <label>Math trainer</label><select id="es_math_trainer">${optHtml(trainers, s.math_trainer||'', '— None —')}</select>
-    <label>English trainer</label><select id="es_english_trainer">${optHtml(trainers, s.english_trainer||'', '— None —')}</select>
-    <div class="step-sub" style="margin-top:2px;">A trainer change keeps the old trainer in the history with an end date.</div>
+    <label>Math trainer</label><select id="es_math_trainer" ${canChangeTrainer()?'':'disabled'}>${optHtml(trainers, s.math_trainer||'', '— None —')}</select>
+    <label>English trainer</label><select id="es_english_trainer" ${canChangeTrainer()?'':'disabled'}>${optHtml(trainers, s.english_trainer||'', '— None —')}</select>
+    <div class="step-sub" style="margin-top:2px;">${canChangeTrainer()?'A trainer change keeps the old trainer in the history with an end date.':'Only Ops and Master Trainers can change trainers.'}</div>
     <label>SSM</label><select id="es_ssm">${optHtml(teamNames(['SSM']), s.ssm||'', '— None —')}</select>
     <label>Target</label><select id="es_target">${optHtml(TARGET_OPTIONS.slice(1), s.target==null?'':String(s.target), '— None —')}</select>
     ${num('total_hours','Total hours purchased')}
@@ -2011,13 +2396,14 @@ async function saveEditStudent(){
   const { sid, s } = editStudentCtx;
   const g = id => { const el = document.getElementById('es_'+id); return el ? el.value.trim() : undefined; };
   const norm = v => v==null ? '' : String(v).slice(0,10) === String(v) || !/^\d{4}-\d{2}-\d{2}T/.test(String(v)) ? String(v) : String(v).slice(0,10);
-  const textKeys = ['name','email','parent_email','phone','course_type','ssm','batch_start_date','target_test_date','validity_end_date','total_hours','hours_math','hours_english','hours_done_math_before','hours_done_english_before','math_trainer','english_trainer','target'];
+  const textKeys = ['name','email','parent_email','phone','course_type','course_status','ssm','batch_start_date','target_test_date','validity_end_date','total_hours','hours_math','hours_english','hours_done_math_before','hours_done_english_before','math_trainer','english_trainer','target'];
   const fields = {};
   textKeys.forEach(k => {
     const nv = g(k); if(nv === undefined) return;
     const ov = (k==='math_trainer'||k==='english_trainer'||k==='target') ? (s[k]==null?'':String(s[k])) : norm(s[k]);
     if(nv !== ov) fields[k] = nv;
   });
+  if(('math_trainer' in fields || 'english_trainer' in fields) && !canChangeTrainer()){ alert(NO_TRAINER_CHANGE_MSG); return; }
   if('name' in fields && !fields.name){ alert('Student name cannot be blank.'); return; }
   if(!Object.keys(fields).length){ closeLogModal(); return; }
   const btn = document.getElementById('esSaveBtn'); btn.disabled = true;
@@ -2073,7 +2459,7 @@ function renderEditModal(){
   if(!who){
     const teamList = (RAW && RAW.Team_Directory || []);
     modal.innerHTML = `<h3>Who are you?</h3><div class="step-sub">So the edit is attributed to you.</div>
-      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${t.role})</option>`).join('')}</select>
+      <select id="whoSelect"><option value="">— Select —</option>${teamList.map(t=>`<option value="${t.name}">${t.name} (${roleLabel(t.role)})</option>`).join('')}</select>
       <div class="log-modal-actions"><button class="btn ghost small" onclick="closeLogModal()">Cancel</button><button class="btn small" onclick="confirmWhoAmI()">Continue</button></div>`;
     return;
   }
