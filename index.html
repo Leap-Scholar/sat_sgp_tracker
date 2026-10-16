@@ -1742,12 +1742,39 @@ async function studentAction(sid, payload, okMsg){
     const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
   } catch(err){ alert('Could not save: ' + err.message); }
 }
+// Quick save: the screen changes straight away and the sheet is updated in the background.
+// If the save fails, the change is undone and you are told.
+function showToast(msg, kind){
+  let el = document.getElementById('sgpToast');
+  if(!el){ el = document.createElement('div'); el.id = 'sgpToast'; el.style.cssText = 'position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#1f2430; color:#fff; padding:8px 16px; border-radius:20px; font-size:13px; z-index:9999; box-shadow:0 4px 14px rgba(0,0,0,.25); transition:opacity .25s;'; document.body.appendChild(el); }
+  el.style.background = kind === 'fail' ? '#B42318' : '#1f2430';
+  el.textContent = msg; el.style.opacity = '1';
+  clearTimeout(el._t); if(kind !== 'wait') el._t = setTimeout(() => { el.style.opacity = '0'; }, kind === 'fail' ? 5000 : 1600);
+}
+function patchLocalStudent(sid, fields){
+  const row = (RAW.Students||[]).find(r => r.student_id === sid); if(!row) return null;
+  const old = {}; Object.keys(fields).forEach(k => { old[k] = row[k]; row[k] = fields[k]; });
+  return old;
+}
+function repaintAfterLocalChange(sid){
+  STUDENTS = buildStudentView(RAW);
+  try{ buildStatStrip(); buildTabs && buildTabs(); render(); updateTodoBadge(); }catch(e){}
+  const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
+}
+async function quickStudentAction(sid, payload, fields){
+  if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first, so this is attributed to you.'); return; }
+  const old = patchLocalStudent(sid, fields);
+  if(!old){ return studentAction(sid, payload); }
+  repaintAfterLocalChange(sid); showToast('Saving…', 'wait');
+  try{ await postAction(payload); showToast('Saved'); }
+  catch(err){ patchLocalStudent(sid, old); repaintAfterLocalChange(sid); showToast('Could not save, change undone: ' + err.message, 'fail'); }
+}
 function markCourseCompleted(sid){
   if(!confirm('Mark this course as completed? This saves today\'s date and your name.')) return;
-  studentAction(sid, { action:'complete_course', student_id:sid });
+  quickStudentAction(sid, { action:'complete_course', student_id:sid }, { course_completed:'TRUE', course_completed_on: new Date().toISOString(), course_completed_by: getWhoAmI() });
 }
 function setOutcome(sid, val){
-  studentAction(sid, { action:'update_student', student_id:sid, fields:{ outcome_status: val || '' } });
+  quickStudentAction(sid, { action:'update_student', student_id:sid, fields:{ outcome_status: val || '' } }, { outcome_status: val || '' });
 }
 function voidToNonSgp(sid){
   const reason = prompt('Reason for void (shown on the student record):');
