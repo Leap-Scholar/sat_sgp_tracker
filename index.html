@@ -375,6 +375,10 @@ function getWhoAmI(){ if(RAW && RAW.me && RAW.me.name) return RAW.me.name; retur
 // ---------- Google sign-in (switched on from the sheet menu) ----------
 function getToken(){ try{ return sessionStorage.getItem('sgp_idtoken') || ''; }catch(e){ return ''; } }
 function setToken(t){ try{ if(t) sessionStorage.setItem('sgp_idtoken', t); else sessionStorage.removeItem('sgp_idtoken'); }catch(e){} }
+// A saved session lasts about a month on this computer, so people sign in once and stay signed in.
+function getSession(){ try{ return localStorage.getItem('sgp_session') || ''; }catch(e){ return ''; } }
+function setSession(t){ try{ if(t) localStorage.setItem('sgp_session', t); else localStorage.removeItem('sgp_session'); }catch(e){} }
+function signOut(){ setSession(''); setToken(''); try{ if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){} location.reload(); }
 function loadGsi(cb, fail){
   if(window.google && google.accounts && google.accounts.id) return cb();
   const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
@@ -409,8 +413,9 @@ async function refreshData(){
   try{
     // cache:'no-store' so a stale cached response (e.g. from before the deployment
     // was fixed) can never get served back silently - always hits Google fresh.
-    const tk = getToken();
-    const res = await fetch(url + (tk ? (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tk) : ''), { cache: 'no-store' });
+    const ss_ = getSession(), tk = getToken();
+    const qs = ss_ ? 'session=' + encodeURIComponent(ss_) : (tk ? 'token=' + encodeURIComponent(tk) : '');
+    const res = await fetch(url + (qs ? (url.includes('?') ? '&' : '?') + qs : ''), { cache: 'no-store' });
     const bodyText = await res.text();
     let json;
     try{
@@ -423,11 +428,12 @@ async function refreshData(){
           : `Response wasn't valid JSON: "${bodyText.trim().slice(0,80)}"`
       );
     }
-    if(json.needs_login){ setToken(''); showSignIn(json); return; }
+    if(json.needs_login){ setToken(''); setSession(''); showSignIn(json); return; }
     if(json.error) throw new Error(json.error);
+    if(json.session){ setSession(json.session); setToken(''); }
     RAW = json;
     STUDENTS = buildStudentView(RAW);
-    document.getElementById('lastSync').textContent = 'Live — synced ' + new Date().toLocaleTimeString() + (RAW.me ? ' · ' + RAW.me.name + (RAW.me.viewOnly ? ' (view only)' : '') : '');
+    document.getElementById('lastSync').innerHTML = 'Live — synced ' + new Date().toLocaleTimeString() + (RAW.me ? ' · ' + RAW.me.name + (RAW.me.viewOnly ? ' (view only)' : '') + ' · <a href="#" onclick="signOut(); return false;" style="color:inherit; text-decoration:underline;">sign out</a>' : '');
     buildStatStrip(); buildTrainerOptions(); render(); updateTodoBadge();
   } catch(err){
     document.getElementById('loadingState').innerHTML =
@@ -2177,7 +2183,7 @@ async function postAction(payload){
   const url = getApiUrl();
   payload.entered_by = getWhoAmI();
   payload.edited_by = payload.entered_by;
-  if(getToken()) payload.token = getToken();
+  if(getSession()) payload.session = getSession(); else if(getToken()) payload.token = getToken();
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
