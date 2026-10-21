@@ -477,6 +477,9 @@ function computeMilestones(s){
 
   const byLabel = {};
   (s.test_scores||[]).slice().sort((a,b)=>testWhen(a)-testWhen(b)).forEach(t => { byLabel[String(t.test_label||'').trim()] = t; });
+  // Older entries are numbered Test 1, Test 2 ... in the old order. Each one stands for the test at the same step of the new order.
+  const OLD_TO_NEW = {'Test 1':'LSPT 1','Test 2':'BBT 8','Test 3':'LSPT 2','Test 4':'BBT 7','Test 5':'LSPT 4','Test 6':'BBT 11','Test 7':'LSPT 5','Test 8':'BBT 10','Test 9':'LSPT 6','Test 10':'BBT 9','Test 11':'LSPT 7'};
+  Object.keys(OLD_TO_NEW).forEach(k => { const t = byLabel[k]; if(t && testTotal(t) && !(byLabel[OLD_TO_NEW[k]] && testTotal(byLabel[OLD_TO_NEW[k]]))) byLabel[OLD_TO_NEW[k]] = t; });
   let diag = Number(s.diag_score) || 0;
   if(!diag && byLabel['Diagnostic']) diag = testTotal(byLabel['Diagnostic']) || 0;
 
