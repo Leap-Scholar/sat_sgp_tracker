@@ -333,7 +333,9 @@ function targetN(s){
 }
 function effGoal(s){
   let n = targetN(s), derived = false;
-  const d = Number(s.diag_score) || 0;
+  let d = Number(s.diag_score) || 0;
+  // A total diagnostic is always above 800. A smaller number is one section (usually English only), so add the two sections or treat the total as unknown.
+  if(d <= 800){ const dm = Number(s.diag_math)||0, de = Number(s.diag_english)||0; d = (dm && de) ? dm + de : 0; }
   if(!n && d > 0){ n = d < 1200 ? 200 : 1500; derived = true; }
   if(!n) return null;
   if(n >= 1000) return { total: n, n, derived };
