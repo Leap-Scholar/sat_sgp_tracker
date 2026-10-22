@@ -584,6 +584,23 @@ function buildStudentView(rawIn){
     s.achieved = a.achieved==='TRUE' ? true : (a.achieved==='FALSE' ? false : null);
     s.achieved_source = a.achieved_source;
   });
+  // A new blank Trial or Reattempt row must not hide earlier data: take the diagnostic from the latest row that has it,
+  // and the score from the latest row that has a score.
+  Object.values(byId).forEach(s => {
+    const h = (s.attempt_history||[]).filter(a => a.hidden!==true && String(a.hidden).toUpperCase()!=='TRUE');
+    const lastWith = f => { for(let i=h.length-1;i>=0;i--){ if(h[i][f]!==''&&h[i][f]!=null&&Number(h[i][f])>0) return h[i]; } return null; };
+    const d = lastWith('diagnostic_score'), dm = lastWith('diagnostic_math'), de = lastWith('diagnostic_english');
+    if(d) s.diag_score = d.diagnostic_score;
+    if(dm) s.diag_math = dm.diagnostic_math;
+    if(de) s.diag_english = de.diagnostic_english;
+    const sc = lastWith('attempt_score');
+    if(sc && !(Number(s.latest_score)>0)){
+      s.latest_score = sc.attempt_score;
+      s.achieved = sc.achieved==='TRUE' ? true : (sc.achieved==='FALSE' ? false : null);
+      s.achieved_source = sc.achieved_source;
+      s.score_from_earlier_attempt = true;
+    }
+  });
 
   (raw.Test_Scores || []).forEach(t => { const s=byId[t.student_id]; if(s) s.test_scores.push(t); });
   (raw.Milestones || []).forEach(m => { const s=byId[m.student_id]; if(s) s.milestone_log.push(m); });
@@ -993,7 +1010,7 @@ function renderRow(s){
     <td><div>${s.math_trainer?s.math_trainer+' (M)':'—'}</div><div class="sub2">${s.english_trainer?s.english_trainer+' (V)':''}</div></td>
     <td>${s.attempt_type||'—'}${s.test_month?'<div class="sub2">'+s.test_month+'</div>':''}</td>
     <td class="num">${fmtTarget(s)}</td>
-    <td class="num">${fmtScore(s.latest_score)}${s.diag_score?'<div class="sub2">diag '+fmtScore(s.diag_score)+'</div>':''}</td>
+    <td class="num">${fmtScore(s.latest_score)}${s.diag_score?'<div class="sub2">diag '+fmtScore(s.diag_score)+'</div>':((s.diag_math||s.diag_english)?'<div class="sub2">diag '+(s.diag_english?'English '+s.diag_english:'Math '+s.diag_math)+' (other section pending)</div>':'')}</td>
     <td>${statusPill(s)}</td>
     <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td></tr>`;
 }
