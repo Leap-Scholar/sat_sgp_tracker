@@ -1727,7 +1727,9 @@ function milestoneProgressHtml(s){
   const m = s.milestone_auto;
   if(!m) return '<div class="placeholder-box">Milestones are tracked for SGP students only.</div>';
   if(!m.diag) return '<div class="placeholder-box">Add the Diagnostic score (Test Score entry, test "Diagnostic") to start tracking milestones.</div>';
-  const head = `<div class="meta" style="margin-bottom:6px;">Diagnostic total <b>${m.diag}</b> &middot; ${m.current||'no test taken yet'}${m.eligibility?' &middot; <b>'+m.eligibility+'</b>':''}${m.outOfOrder.length?' &middot; <span class="pill amber">Out of order: '+m.outOfOrder.join(', ')+'</span>':''}</div>`;
+  const oldM = (s.milestone_log||[]).filter(x => String(x.entered_by||'').indexOf('Imported from SGP sheet') === 0).slice(-1)[0];
+  const oldLine = oldM ? `<div class="meta" style="margin-bottom:6px;"><span class="pill teal">Academic team status</span> ${escHtml(oldM.milestone_status)}</div>` : '';
+  const head = oldLine + `<div class="meta" style="margin-bottom:6px;">Diagnostic total <b>${m.diag}</b> &middot; ${m.current||'no test taken yet'}${m.eligibility?' &middot; <b>'+m.eligibility+'</b>':''}${m.outOfOrder.length?' &middot; <span class="pill amber">Out of order: '+m.outOfOrder.join(', ')+'</span>':''}</div>`;
   const rows = m.rows.map(r => {
     const pill = r.status==='Achieved' ? 'teal' : (r.status==='Not achieved' ? 'amber' : 'slate');
     return `<tr><td>${r.stage}</td><td>${r.label}${r.outOfOrder?' <span class="pill amber">out of order</span>':''}</td><td>${r.required||'—'}</td><td>${r.total!=null?r.total:'—'}</td><td>${r.gain!=null?(r.gain>0?'+':'')+r.gain:'—'}</td><td><span class="pill ${pill}">${r.status}</span></td></tr>`;
