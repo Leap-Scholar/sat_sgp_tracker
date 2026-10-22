@@ -408,10 +408,12 @@ async function boot(){
   await refreshData();
 }
 
-async function refreshData(){
+async function refreshData(quiet){
   const url = getApiUrl();
-  document.getElementById('loadingState').style.display = 'block';
-  document.getElementById('tableRoot').style.display = 'none';
+  if(quiet !== true){
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('tableRoot').style.display = 'none';
+  }
   try{
     // cache:'no-store' so a stale cached response (e.g. from before the deployment
     // was fixed) can never get served back silently - always hits Google fresh.
@@ -438,11 +440,18 @@ async function refreshData(){
     document.getElementById('lastSync').innerHTML = 'Live — synced ' + new Date().toLocaleTimeString() + (RAW.me ? ' · ' + RAW.me.name + (RAW.me.viewOnly ? ' (view only)' : '') + ' · <a href="#" onclick="signOut(); return false;" style="color:inherit; text-decoration:underline;">sign out</a>' : '');
     buildStatStrip(); buildTrainerOptions(); render(); updateTodoBadge();
   } catch(err){
+    if(quiet === true){ showToast('Could not refresh in the background: ' + err.message, 'fail'); return; }
     document.getElementById('loadingState').innerHTML =
       'Could not load data: ' + escHtml(err.message) + '<div class="sub2" style="display:block; margin:10px 0; text-transform:none; letter-spacing:normal; max-width:560px;">If this keeps happening on one computer only: (1) press Ctrl+Shift+R to reload without the saved copy, (2) turn off ad blockers or privacy extensions for this page, (3) in Chrome open Settings, Privacy, and allow third-party cookies for this site, or try a new Incognito window, (4) check you are signed in to only your LeapScholar Google account in that Chrome profile.</div><button class="btn ghost" onclick="refreshData()">Retry</button>';
     return;
   }
   document.getElementById('loadingState').style.display = 'none';
+}
+// After a save: pull fresh data quietly in the background (no spinner, the table stays), and refresh the open panel.
+async function bgRefresh(sid){
+  const panelOpen = document.getElementById('overlay').classList.contains('open');
+  await refreshData(true);
+  if(panelOpen && sid){ const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st); }
 }
 
 // ---------- JOIN RAW TABS INTO PER-STUDENT VIEW MODEL ----------
@@ -1631,8 +1640,7 @@ async function saveTrackerBox(){
     const payload = { action:'save_tracker_box', student_id:s.student_id, student_name:s.name, subject:box, box_fields:{text}, regularity_note: document.getElementById('tk_reg').value.trim(), target_test_date: s.target_test_date||'' };
     if(trackerCtx.trackerId) payload.record_id = trackerCtx.trackerId; else payload.period_label = period;
     await postAction(payload);
-    await refreshData(); closeLogModal();
-    const st = STUDENTS.find(x => x.student_id === s.student_id); if(st) openPanel(st);
+    closeLogModal(); showToast('Saved'); bgRefresh(s.student_id);
   } catch(err){
     document.getElementById('logSaveStatus').className='save-status fail';
     document.getElementById('logSaveStatus').textContent='Could not save: '+err.message; btn.disabled = false;
@@ -1641,8 +1649,7 @@ async function saveTrackerBox(){
 async function markTrackerSent(trackerId){
   if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first.'); return; }
   const tr = (RAW.Progress_Trackers||[]).find(t => t.record_id === trackerId);
-  try{ await postAction({ action:'mark_tracker_sent', record_id:trackerId }); await refreshData();
-    const st = STUDENTS.find(x => x.student_id === tr.student_id); if(st) openPanel(st); } catch(err){ alert('Could not save: '+err.message); }
+  try{ await postAction({ action:'mark_tracker_sent', record_id:trackerId }); showToast('Saved'); await bgRefresh(tr.student_id); } catch(err){ alert('Could not save: '+err.message); }
 }
 
 // ---------- Documents register ----------
@@ -1742,10 +1749,10 @@ function panelActionsHtml(s){
 async function studentAction(sid, payload, okMsg){
   if(!getWhoAmI()){ alert('Open "+ Log Entry" once and pick your name first, so this is attributed to you.'); return; }
   try{
+    showToast('Saving…', 'wait');
     await postAction(payload);
-    await refreshData();
-    const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
-  } catch(err){ alert('Could not save: ' + err.message); }
+    showToast('Saved'); await bgRefresh(sid);
+  } catch(err){ showToast('Could not save: ' + err.message, 'fail'); }
 }
 // Quick save: the screen changes straight away and the sheet is updated in the background.
 // If the save fails, the change is undone and you are told.
@@ -2365,8 +2372,8 @@ async function submitLogEntry(){
     await postAction(payload);
     document.getElementById('logSaveStatus').className = 'save-status ok';
     document.getElementById('logSaveStatus').textContent = 'Saved.';
-    await refreshData();
-    setTimeout(closeLogModal, 700);
+    const savedSid = logPickedStudent ? logPickedStudent.id : '';
+    closeLogModal(); showToast('Saved'); bgRefresh(savedSid);
   } catch(err){
     document.getElementById('logSaveStatus').className = 'save-status fail';
     document.getElementById('logSaveStatus').textContent = 'Could not save: ' + err.message;
@@ -2444,15 +2451,22 @@ async function saveEditStudent(){
   if(('math_trainer' in fields || 'english_trainer' in fields) && !canChangeTrainer()){ alert(NO_TRAINER_CHANGE_MSG); return; }
   if('name' in fields && !fields.name){ alert('Student name cannot be blank.'); return; }
   if(!Object.keys(fields).length){ closeLogModal(); return; }
-  const btn = document.getElementById('esSaveBtn'); btn.disabled = true;
+  const btn = document.getElementById('esSaveBtn');
+  // Fields that only live on the Students row show straight away; trainer changes are rebuilt from the sheet afterwards.
+  const localFields = {}; Object.keys(fields).filter(k => k !== 'math_trainer' && k !== 'english_trainer' && k !== 'target').forEach(k => { localFields[k] = fields[k]; });
+  const oldLocal = patchLocalStudent(sid, localFields);
+  if(oldLocal){ closeLogModal(); repaintAfterLocalChange(sid); showToast('Saving…', 'wait'); }
+  else { btn.disabled = true; }
   try{
     await postAction({ action:'edit_student', student_id:sid, fields });
-    document.getElementById('logSaveStatus').className='save-status ok';
-    document.getElementById('logSaveStatus').textContent='Saved.';
-    await refreshData();
-    closeLogModal();
-    const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
+    if(oldLocal){ showToast('Saved'); bgRefresh(sid); }
+    else {
+      document.getElementById('logSaveStatus').className='save-status ok';
+      document.getElementById('logSaveStatus').textContent='Saved.';
+      closeLogModal(); bgRefresh(sid);
+    }
   } catch(err){
+    if(oldLocal){ patchLocalStudent(sid, oldLocal); repaintAfterLocalChange(sid); showToast('Could not save, change undone: ' + err.message, 'fail'); return; }
     document.getElementById('logSaveStatus').className='save-status fail';
     document.getElementById('logSaveStatus').textContent='Could not save: ' + err.message + ' (if it says unknown action, the v6 script is not deployed yet)';
     btn.disabled = false;
@@ -2536,30 +2550,29 @@ async function saveEdit(){
     if(String(v) !== oldCmp) fields[k] = v;
   });
   if(!Object.keys(fields).length){ closeLogModal(); return; }
-  const btn = document.getElementById('editSaveBtn'); btn.disabled = true;
-  const sid = rec.student_id;
+  const sid = rec.student_id, tab = editCtx.tab, rid = editCtx.id;
+  // Show the change straight away; the sheet is updated in the background and the change is undone if that fails.
+  const old = {}; Object.keys(fields).forEach(k => { old[k] = rec[k]; rec[k] = fields[k]; });
+  closeLogModal(); repaintAfterLocalChange(sid); showToast('Saving…', 'wait');
   try{
-    await postAction({ action:'update_record', tab:editCtx.tab, record_id:editCtx.id, fields });
-    document.getElementById('logSaveStatus').className='save-status ok';
-    document.getElementById('logSaveStatus').textContent='Saved.';
-    await refreshData();
-    closeLogModal();
-    const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
+    await postAction({ action:'update_record', tab, record_id:rid, fields });
+    showToast('Saved'); bgRefresh(sid);
   } catch(err){
-    document.getElementById('logSaveStatus').className='save-status fail';
-    document.getElementById('logSaveStatus').textContent='Could not save: ' + err.message;
-    btn.disabled = false;
+    Object.keys(old).forEach(k => { rec[k] = old[k]; }); repaintAfterLocalChange(sid);
+    showToast('Could not save, change undone: ' + err.message, 'fail');
   }
 }
 async function hideRec(tab, id){
   if(!getWhoAmI()){ openEdit(tab, id); return; }
   if(!confirm('Remove this entry? It is hidden from the dashboard and all counts, but kept in the sheet and the audit log.')) return;
   const rec = findRecord(tab, id); const sid = rec && rec.student_id;
+  const oldHidden = rec ? rec.hidden : undefined;
+  if(rec){ rec.hidden = 'TRUE'; repaintAfterLocalChange(sid); }
+  showToast('Saving…', 'wait');
   try{
     await postAction({ action:'hide_record', tab, record_id:id });
-    await refreshData();
-    const st = STUDENTS.find(x => x.student_id === sid); if(st) openPanel(st);
-  } catch(err){ alert('Could not remove: ' + err.message); }
+    showToast('Removed'); bgRefresh(sid);
+  } catch(err){ if(rec){ rec.hidden = oldHidden; repaintAfterLocalChange(sid); } showToast('Could not remove, put back: ' + err.message, 'fail'); }
 }
 
 function downloadBackup(){
