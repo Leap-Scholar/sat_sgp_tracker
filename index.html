@@ -593,7 +593,7 @@ function buildStudentView(rawIn){
       else if(s.achieved === false){ s.review_meets_goal = true; }
     }
     // Regularity: computed from the class log, not typed in.
-    const logged = s.attendance_log.length;
+    const logged = s.attendance_log.filter(a => a.status !== 'No session').length;   // a week with no session is not a class that was logged
     const cancelled = s.attendance_log.filter(a => a.status === 'Cancelled').length;
     const rescheduled = s.attendance_log.filter(a => a.status === 'Rescheduled').length;
     // Counted cancellations = student personal reasons or compliance reasons (HW, test, error log).
