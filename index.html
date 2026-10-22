@@ -542,6 +542,8 @@ function buildStudentView(rawIn){
   ['Weekly_Comments','Class_Attendance','PTM_Log','Test_Scores','Milestones','Referral_Log','Scorecards','Attempts','Root_Cause_Analysis','Portion_History','Trainer_History'].forEach(k => {
     if(Array.isArray(rawIn[k])) raw[k] = rawIn[k].filter(r => !isHiddenRow(r));
   });
+  // Some ids are all digits (like 60238658) and come back from the sheet as numbers. Make every student_id text so lookups always match.
+  Object.keys(raw).forEach(k => { if(Array.isArray(raw[k])) raw[k] = raw[k].map(r => (r && typeof r==='object' && r.student_id!=null && typeof r.student_id!=='string') ? Object.assign({}, r, {student_id: String(r.student_id)}) : r); });
   const byId = {};
   (raw.Students || []).forEach(s => { byId[s.student_id] = Object.assign({}, s); });
 
