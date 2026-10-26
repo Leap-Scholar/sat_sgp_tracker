@@ -62,9 +62,11 @@
   select{padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13px; background:var(--panel); color:var(--ink);}
   .filterbar{display:flex; gap:8px; align-items:center; padding:0 32px 8px; flex-wrap:wrap;}
   .filterbar select{font-size:12.5px; padding:6px 8px;}
+  .filterbar .flt{display:flex; align-items:center; gap:6px;}
   .filterbar .flt-lbl{font-size:11.5px; color:var(--ink-soft); font-weight:600;}
+  .filterbar .flt-more{flex-basis:100%; display:flex; gap:14px; flex-wrap:wrap; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:10px;}
   .filterbar .flt-clear{font-size:12px; text-decoration:underline; cursor:pointer; color:var(--ink-soft);}
-  .summarybar{padding:0 32px 12px; font-size:13px;}
+  .summarybar{padding:0 32px 12px; font-size:13px; color:var(--ink);}
   .summarybar .chip{display:inline-block; padding:5px 11px; margin:0 8px 6px 0; border:1px solid var(--line); border-radius:999px; background:var(--panel);}
   .summarybar .chip b{font-weight:700;}
   .summarybar .note{color:var(--ink-soft); font-size:12.5px; margin-top:2px;}
@@ -1042,36 +1044,43 @@ function nonSgpTargetNote(s){
 }
 function setFlt(k, v){ FLT[k] = v; render(); }
 function clearFlt(){ FLT = { ctype:'', month:'', period:'', sgpT:'', mathT:'', engT:'', atype:'' }; buildFilterBar(); render(); }
+let FLT_MORE = false;
+function toggleMoreFlt(){ FLT_MORE = !FLT_MORE; buildFilterBar(); }
 function buildFilterBar(){
   const months = [...new Set(STUDENTS.map(examMonthOf))].sort((a,b)=>{ const na=a==='Month not set', nb=b==='Month not set'; if(na||nb) return na?(nb?0:1):-1; return monthSortKey(b)-monthSortKey(a); });
   const vals = k => [...new Set(STUDENTS.map(s => Number(s[k])).filter(Boolean))].sort((a,b)=>b-a);
-  const sel = (key, label, opts) => `<span class="flt-lbl">${label}</span><select onchange="setFlt('${key}', this.value)">${opts.map(([v,t]) => `<option value="${v}" ${String(FLT[key])===String(v)?'selected':''}>${t}</option>`).join('')}</select>`;
+  const sel = (key, label, opts) => `<label class="flt"><span class="flt-lbl">${label}</span><select onchange="setFlt('${key}', this.value)">${opts.map(([v,t]) => `<option value="${v}" ${String(FLT[key])===String(v)?'selected':''}>${t}</option>`).join('')}</select></label>`;
+  const moreKeys = ['period','sgpT','mathT','engT','atype'], nMore = moreKeys.filter(k => FLT[k]).length, nAny = Object.keys(FLT).filter(k => FLT[k]).length;
   document.getElementById('filterBar').innerHTML =
     sel('ctype','Course',[['','All'],['SGP','SGP'],['Non-SGP','Non-SGP']]) +
     sel('month','Exam month',[['','All months']].concat(months.map(m => [m, m]))) +
-    sel('period','Period',[['','Total'],['upcoming','Upcoming exams'],['history','History']]) +
-    sel('sgpT','SGP target',[['','All'],['1500','1500+'],['200','200+']]) +
-    sel('mathT','Non-SGP Math target',[['','All']].concat(vals('target_math').map(v => [v, v]))) +
-    sel('engT','Non-SGP English target',[['','All']].concat(vals('target_english').map(v => [v, v]))) +
-    sel('atype','Attempt',[['','All'],['First attempt','First attempt'],['Reattempt','Reattempt'],['Trial','Trial']]) +
-    `<span class="flt-clear" onclick="clearFlt()">Clear filters</span>`;
+    `<button class="btn ghost small" onclick="toggleMoreFlt()">${FLT_MORE?'Fewer filters':'More filters'}${nMore?' ('+nMore+')':''}</button>` +
+    (nAny ? `<span class="flt-clear" onclick="clearFlt()">Clear</span>` : '') +
+    (FLT_MORE ? `<div class="flt-more">` +
+      sel('period','Period',[['','Total'],['upcoming','Upcoming exams'],['history','History']]) +
+      sel('atype','Attempt',[['','All'],['First attempt','First attempt'],['Reattempt','Reattempt'],['Trial','Trial']]) +
+      sel('sgpT','SGP target',[['','All'],['1500','1500+'],['200','200+']]) +
+      sel('mathT','Non-SGP Math target',[['','All']].concat(vals('target_math').map(v => [v, v]))) +
+      sel('engT','Non-SGP English target',[['','All']].concat(vals('target_english').map(v => [v, v]))) + `</div>` : '');
 }
 function buildSummaryBar(list){
   const el = document.getElementById('summaryBar'); if(!el) return;
   const base = STUDENTS.filter(passMonthPeriod);
   const sgp = base.filter(s => ctypeOf(s)==='SGP'), non = base.filter(s => ctypeOf(s)==='Non-SGP');
-  const scope = (FLT.month ? FLT.month : 'all months') + (FLT.period==='upcoming' ? ' (upcoming exams)' : (FLT.period==='history' ? ' (history)' : ''));
-  let html = `<span class="chip">Total students <b>${base.length}</b></span><span class="chip">SGP <b>${sgp.length}</b></span><span class="chip">Non-SGP <b>${non.length}</b></span><span class="sub2" style="font-size:12px;">for ${scope}</span><br>`;
-  const types = ['First attempt','Reattempt','Trial'];
-  html += `<span class="sub2" style="font-size:12.5px;">SGP students by attempt in ${FLT.month||'their current attempt'}: </span>` + types.map(t => {
-    const l = sgp.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t));
-    const ach = l.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t && (a.achieved===true || String(a.achieved).toUpperCase()==='TRUE'))).length;
-    return `<span class="chip">${t} <b>${l.length}</b> <span class="sub2">(${ach} achieved)</span></span>`;
-  }).join('');
+  const scope = (FLT.month ? FLT.month : 'all months') + (FLT.period==='upcoming' ? ', upcoming exams' : (FLT.period==='history' ? ', history' : ''));
+  let html = `<b>${base.length}</b> students &middot; SGP <b>${sgp.length}</b> &middot; Non-SGP <b>${non.length}</b> <span class="sub2">(${scope})</span>`;
+  if(FLT.month || FLT.atype || FLT.ctype==='SGP'){
+    const types = ['First attempt','Reattempt','Trial'];
+    html += `<div class="note">SGP by attempt: ` + types.map(t => {
+      const l = sgp.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t));
+      const ach = l.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t && (a.achieved===true || String(a.achieved).toUpperCase()==='TRUE'))).length;
+      return `${t} <b>${l.length}</b> (${ach} achieved)`;
+    }).join(' &middot; ') + `</div>`;
+  }
   if(FLT.sgpT || FLT.mathT || FLT.engT){
     const ach = list.filter(s => s.achieved===true).length, no = list.filter(s => s.achieved===false && !s.is_trial_miss).length, wait = list.filter(s => s.achieved===null).length;
     const sc = list.map(s => Number(s.latest_score)).filter(v => v>800); const avg = sc.length ? Math.round(sc.reduce((a,b)=>a+b,0)/sc.length) : null;
-    html += `<div class="note">Performance of the ${list.length} students in this target group: ${ach} achieved, ${no} not achieved, ${wait} waiting for a result${avg?', average latest score '+avg:''}.</div>`;
+    html += `<div class="note">This target group (${list.length}): ${ach} achieved, ${no} not achieved, ${wait} waiting${avg?', average latest score '+avg:''}.</div>`;
   }
   el.innerHTML = html;
 }
