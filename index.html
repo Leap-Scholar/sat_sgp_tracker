@@ -60,6 +60,15 @@
   .search{flex:1; min-width:220px; max-width:320px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13.5px; background:var(--panel);}
   .search:focus{outline:none; border-color:var(--ink-soft);}
   select{padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:inherit; font-size:13px; background:var(--panel); color:var(--ink);}
+  .filterbar{display:flex; gap:8px; align-items:center; padding:0 32px 8px; flex-wrap:wrap;}
+  .filterbar select{font-size:12.5px; padding:6px 8px;}
+  .filterbar .flt-lbl{font-size:11.5px; color:var(--ink-soft); font-weight:600;}
+  .filterbar .flt-clear{font-size:12px; text-decoration:underline; cursor:pointer; color:var(--ink-soft);}
+  .summarybar{padding:0 32px 12px; font-size:13px;}
+  .summarybar .chip{display:inline-block; padding:5px 11px; margin:0 8px 6px 0; border:1px solid var(--line); border-radius:999px; background:var(--panel);}
+  .summarybar .chip b{font-weight:700;}
+  .summarybar .note{color:var(--ink-soft); font-size:12.5px; margin-top:2px;}
+  .tests-link{color:var(--violet); text-decoration:underline; cursor:pointer; font-size:12.5px; white-space:nowrap;}
   .toolbar .meta{margin-left:auto; font-size:12.5px; color:var(--ink-soft);}
   .btn{padding:8px 14px; border:1px solid var(--ink); border-radius:8px; background:var(--ink); color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;}
   .btn:hover{opacity:.88;}
@@ -127,6 +136,14 @@
     font-family:inherit; font-size:13.5px; margin-bottom:10px; background:var(--panel);
   }
   .log-modal textarea{min-height:70px; resize:vertical;}
+  /* Wide, two-row style form: fields sit side by side so nobody scrolls down a long list */
+  .log-modal.wide{width:min(980px, 96vw);}
+  .log-modal.wide .entry-type-row{flex-wrap:wrap;}
+  .log-modal.wide .entry-type-opt{flex:1 1 110px;}
+  .grid2{display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:0 16px; align-items:start;}
+  .grid2 > .full{grid-column:1 / -1;}
+  .grid2 .fld{min-width:0;}
+  .grid2 .checks{display:flex; flex-wrap:wrap; gap:4px 22px;}
   .log-modal label{font-size:11.5px; font-weight:600; color:var(--ink-soft); display:block; margin-bottom:4px;}
   .entry-type-row{display:flex; gap:6px; margin-bottom:14px;}
   .entry-type-opt{flex:1; padding:9px 6px; border:1px solid var(--line); border-radius:8px; text-align:center; font-size:12px; font-weight:600; cursor:pointer; color:var(--ink-soft);}
@@ -201,6 +218,8 @@
   <select id="trainerFilter"><option value="">All trainers</option></select>
   <div class="meta" id="resultMeta"></div>
 </div>
+<div class="filterbar" id="filterBar"></div>
+<div class="summarybar" id="summaryBar"></div>
 
 <div id="loadingState" class="loading">Loading live data from your sheet…</div>
 <table id="tableRoot" style="display:none;">
@@ -974,6 +993,7 @@ function buildTrainerOptions(){
   [...englishSet].sort().forEach(t => { const o=document.createElement('option'); o.value='eng:'+t; o.textContent=t+' (V)'; engGroup.appendChild(o); });
   sel.appendChild(engGroup);
   sel.onchange = () => { trainerFilter = sel.value; render(); };
+  buildFilterBar();
 }
 
 function currentList(){
@@ -983,6 +1003,7 @@ function currentList(){
     if(trainerFilter.startsWith('math:')) list = list.filter(s => s.math_trainer === trainerFilter.slice(5));
     else if(trainerFilter.startsWith('eng:')) list = list.filter(s => s.english_trainer === trainerFilter.slice(4));
   }
+  list = list.filter(filterPass);
   if(searchTerm){
     const q = searchTerm.toLowerCase();
     list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.math_trainer||'').toLowerCase().includes(q) ||
@@ -991,9 +1012,105 @@ function currentList(){
   return list;
 }
 
+
+// ---------- OVERVIEW FILTERS, SUMMARY COUNTS AND TEST HISTORY POP-UP ----------
+let FLT = { ctype:'', month:'', period:'', sgpT:'', mathT:'', engT:'', atype:'' };
+function ctypeOf(s){ const t = String(s.course_type||'').toLowerCase().replace(/[^a-z]/g,''); return t==='sgp' ? 'SGP' : (t==='nonsgp' ? 'Non-SGP' : ''); }
+function examMonthOf(s){ return workloadMonth(s); }
+function monthIsUpcoming(label){ const k = monthSortKey(label); if(k >= 9e9) return false; const n = new Date(); return k >= n.getFullYear()*12 + n.getMonth(); }
+function atypeKey(t){ t = String(t||'').toLowerCase(); if(/trial/.test(t)) return 'Trial'; if(/re-?attempt|second|third|final/.test(t)) return 'Reattempt'; if(/first/.test(t)) return 'First attempt'; return ''; }
+function attemptsFor(s, mon){ const h = (s.attempt_history||[]).filter(a => !isHiddenRow(a)); return mon ? h.filter(a => normMonth(a.test_month, s.batch_start_date) === mon) : h.slice(-1); }
+function passMonthPeriod(s){
+  const m = examMonthOf(s);
+  if(FLT.month && m !== FLT.month) return false;
+  if(FLT.period==='upcoming' && !monthIsUpcoming(m)) return false;
+  if(FLT.period==='history' && !(monthSortKey(m) < 9e9 && !monthIsUpcoming(m))) return false;
+  return true;
+}
+function filterPass(s){
+  if(FLT.ctype && ctypeOf(s) !== FLT.ctype) return false;
+  if(!passMonthPeriod(s)) return false;
+  if(FLT.sgpT && !(ctypeOf(s)==='SGP' && targetN(s) === Number(FLT.sgpT))) return false;
+  if(FLT.mathT && !(ctypeOf(s)==='Non-SGP' && Number(s.target_math) === Number(FLT.mathT))) return false;
+  if(FLT.engT && !(ctypeOf(s)==='Non-SGP' && Number(s.target_english) === Number(FLT.engT))) return false;
+  if(FLT.atype && !attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type) === FLT.atype)) return false;
+  return true;
+}
+function nonSgpTargetNote(s){
+  if(ctypeOf(s)!=='Non-SGP' || !(s.target_math || s.target_english)) return '';
+  return '<div class="sub2">'+(s.target_math?'Math '+Number(s.target_math):'')+(s.target_math&&s.target_english?' · ':'')+(s.target_english?'English '+Number(s.target_english):'')+'</div>';
+}
+function setFlt(k, v){ FLT[k] = v; render(); }
+function clearFlt(){ FLT = { ctype:'', month:'', period:'', sgpT:'', mathT:'', engT:'', atype:'' }; buildFilterBar(); render(); }
+function buildFilterBar(){
+  const months = [...new Set(STUDENTS.map(examMonthOf))].sort((a,b)=>{ const na=a==='Month not set', nb=b==='Month not set'; if(na||nb) return na?(nb?0:1):-1; return monthSortKey(b)-monthSortKey(a); });
+  const vals = k => [...new Set(STUDENTS.map(s => Number(s[k])).filter(Boolean))].sort((a,b)=>b-a);
+  const sel = (key, label, opts) => `<span class="flt-lbl">${label}</span><select onchange="setFlt('${key}', this.value)">${opts.map(([v,t]) => `<option value="${v}" ${String(FLT[key])===String(v)?'selected':''}>${t}</option>`).join('')}</select>`;
+  document.getElementById('filterBar').innerHTML =
+    sel('ctype','Course',[['','All'],['SGP','SGP'],['Non-SGP','Non-SGP']]) +
+    sel('month','Exam month',[['','All months']].concat(months.map(m => [m, m]))) +
+    sel('period','Period',[['','Total'],['upcoming','Upcoming exams'],['history','History']]) +
+    sel('sgpT','SGP target',[['','All'],['1500','1500+'],['200','200+']]) +
+    sel('mathT','Non-SGP Math target',[['','All']].concat(vals('target_math').map(v => [v, v]))) +
+    sel('engT','Non-SGP English target',[['','All']].concat(vals('target_english').map(v => [v, v]))) +
+    sel('atype','Attempt',[['','All'],['First attempt','First attempt'],['Reattempt','Reattempt'],['Trial','Trial']]) +
+    `<span class="flt-clear" onclick="clearFlt()">Clear filters</span>`;
+}
+function buildSummaryBar(list){
+  const el = document.getElementById('summaryBar'); if(!el) return;
+  const base = STUDENTS.filter(passMonthPeriod);
+  const sgp = base.filter(s => ctypeOf(s)==='SGP'), non = base.filter(s => ctypeOf(s)==='Non-SGP');
+  const scope = (FLT.month ? FLT.month : 'all months') + (FLT.period==='upcoming' ? ' (upcoming exams)' : (FLT.period==='history' ? ' (history)' : ''));
+  let html = `<span class="chip">Total students <b>${base.length}</b></span><span class="chip">SGP <b>${sgp.length}</b></span><span class="chip">Non-SGP <b>${non.length}</b></span><span class="sub2" style="font-size:12px;">for ${scope}</span><br>`;
+  const types = ['First attempt','Reattempt','Trial'];
+  html += `<span class="sub2" style="font-size:12.5px;">SGP students by attempt in ${FLT.month||'their current attempt'}: </span>` + types.map(t => {
+    const l = sgp.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t));
+    const ach = l.filter(s => attemptsFor(s, FLT.month).some(a => atypeKey(a.attempt_type)===t && (a.achieved===true || String(a.achieved).toUpperCase()==='TRUE'))).length;
+    return `<span class="chip">${t} <b>${l.length}</b> <span class="sub2">(${ach} achieved)</span></span>`;
+  }).join('');
+  if(FLT.sgpT || FLT.mathT || FLT.engT){
+    const ach = list.filter(s => s.achieved===true).length, no = list.filter(s => s.achieved===false && !s.is_trial_miss).length, wait = list.filter(s => s.achieved===null).length;
+    const sc = list.map(s => Number(s.latest_score)).filter(v => v>800); const avg = sc.length ? Math.round(sc.reduce((a,b)=>a+b,0)/sc.length) : null;
+    html += `<div class="note">Performance of the ${list.length} students in this target group: ${ach} achieved, ${no} not achieved, ${wait} waiting for a result${avg?', average latest score '+avg:''}.</div>`;
+  }
+  el.innerHTML = html;
+}
+function testsFor(s){
+  const seen = {}, out = [];
+  (s.test_scores||[]).filter(t => !isHiddenRow(t)).forEach(t => { const tot = testTotal(t); if(!tot) return; const k = t.test_label || t.test_number; if(seen[k] && seen[k] >= tot) return; seen[k] = tot; out.push({ label:k, total:tot, math:t.math_score, english:t.english_score, date:t.test_date }); });
+  const num = x => { const m = String(x.label).match(/(\d+)/); return /diag/i.test(x.label) ? -1 : (m ? +m[1] : 999); };
+  return out.sort((a,b) => num(a)-num(b));
+}
+function testsCell(s){
+  const t = testsFor(s).filter(x => !/diag/i.test(x.label));
+  if(!t.length) return '<span class="sub2">—</span>';
+  const last = t[t.length-1];
+  return `<span class="tests-link" onclick="event.stopPropagation(); openTestsPopup('${s.student_id}')">${t.length} test${t.length===1?'':'s'} &middot; last ${fmtScore(last.total)}</span>`;
+}
+function openTestsPopup(id){
+  const s = STUDENTS.find(x => String(x.student_id) === String(id)); if(!s) return;
+  const t = testsFor(s);
+  const att = (s.attempt_history||[]).filter(a => !isHiddenRow(a));
+  const diag = s.diag_score ? fmtScore(s.diag_score) : '—';
+  const html = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+      <span style="font-size:16px; font-weight:600;">${escHtml(s.name)}: all tests <span class="sub2">(diagnostic ${diag}${s.diag_math||s.diag_english?' &middot; M '+(s.diag_math||'—')+' / E '+(s.diag_english||'—'):''})</span></span>
+      <span class="x" onclick="closeDrill()" style="cursor:pointer; font-size:20px;">&times;</span></div>
+    <div style="overflow:auto;"><table class="tbl" style="width:100%; font-size:12.5px; border-collapse:collapse;">
+      <thead><tr><th style="text-align:left;">Test</th><th>Total</th><th>Math</th><th>English</th><th>Change from diagnostic</th></tr></thead>
+      <tbody>${t.length ? t.map(x => { if(/diag/i.test(x.label)){ x = Object.assign({}, x, { total: Number(s.diag_score)||x.total, math: s.diag_math||x.math, english: s.diag_english||x.english }); } return x; }).map(x => `<tr style="border-top:1px solid #eee;"><td><b>${escHtml(x.label)}</b></td><td style="text-align:center;">${fmtScore(x.total)}</td><td style="text-align:center;">${x.math||'·'}</td><td style="text-align:center;">${x.english||'·'}</td><td style="text-align:center;">${(s.diag_score && !/diag/i.test(x.label)) ? (x.total - Number(s.diag_score) >= 0 ? '+' : '') + (x.total - Number(s.diag_score)) : '·'}</td></tr>`).join('') : '<tr><td colspan="5" class="sub2">No test scores recorded yet.</td></tr>'}</tbody></table></div>
+    <div style="font-size:14px; font-weight:600; margin:14px 0 6px;">Attempts</div>
+    <div style="overflow:auto;"><table class="tbl" style="width:100%; font-size:12.5px; border-collapse:collapse;">
+      <thead><tr><th style="text-align:left;">Type</th><th>Month</th><th>Target</th><th>Diagnostic</th><th>Score</th><th>Result</th></tr></thead>
+      <tbody>${att.length ? att.map(a => `<tr style="border-top:1px solid #eee;"><td>${escHtml(a.attempt_type||'—')}</td><td style="text-align:center;">${escHtml(normMonth(a.test_month, s.batch_start_date)||'—')}</td><td style="text-align:center;">${escHtml(a.target||'—')}</td><td style="text-align:center;">${fmtScore(a.diagnostic_score)}</td><td style="text-align:center;">${fmtScore(a.attempt_score)}</td><td style="text-align:center;">${(a.achieved===true||String(a.achieved).toUpperCase()==='TRUE')?'Achieved':((a.achieved===false||String(a.achieved).toUpperCase()==='FALSE')?'Not achieved':'Pending')}</td></tr>`).join('') : '<tr><td colspan="6" class="sub2">No attempts recorded yet.</td></tr>'}</tbody></table></div>
+    <div style="margin-top:10px;"><button class="btn ghost small" onclick="closeDrill(); openPanel(STUDENTS.find(x=>String(x.student_id)==='${s.student_id}'))">Open full student</button></div>`;
+  document.getElementById('drillPanel').innerHTML = html;
+  document.getElementById('drillOverlay').classList.add('open');
+}
+
 function renderHead(){
   document.getElementById('tableHead').innerHTML = viewMode==='overview'
-    ? `<tr><th>Student</th><th>Trainers</th><th>Target</th><th>Score</th><th>Attempt status</th><th>Milestone</th><th>Root cause</th></tr>`
+    ? `<tr><th>Student</th><th>Trainers</th><th>Target</th><th>Score</th><th>Tests</th><th>Attempt status</th><th>Milestone</th><th>Root cause</th></tr>`
     : `<tr><th>Student</th><th>Trainers</th><th>Attempt</th><th>Target</th><th>Latest score</th><th>Status</th><th>Milestone</th></tr>`;
 }
 function renderRow(s){
@@ -1001,8 +1118,9 @@ function renderRow(s){
     return `<tr data-id="${s.student_id}">
       <td><div class="name">${s.name}</div><div class="sub2">${s.email||'<span class="pill red" style="font-size:10.5px; padding:1px 6px;">no email</span>'}</div></td>
       <td><div>${s.math_trainer?s.math_trainer+' (M)':'—'}</div><div class="sub2">${s.english_trainer?s.english_trainer+' (V)':''}</div></td>
-      <td class="num">${fmtTarget(s)}</td>
+      <td class="num">${fmtTarget(s)}${nonSgpTargetNote(s)}</td>
       <td class="num">${fmtScore(s.latest_score)}</td>
+      <td>${testsCell(s)}</td>
       <td>${statusPill(s)}</td>
       <td><span class="sub2" style="font-size:12.5px;">${s.milestone_status||'—'}</span></td>
       <td>${rootCauseTags(s)}</td></tr>`;
@@ -1020,6 +1138,7 @@ function renderRow(s){
 function render(){
   buildTabs(); renderHead();
   const list = currentList();
+  try{ buildSummaryBar(list); }catch(e){ console.error('summary', e); }
   const body=document.getElementById('tableBody'), table=document.getElementById('tableRoot'), empty=document.getElementById('emptyState');
   const insightsRoot = document.getElementById('insightsRoot');
   const toolbar = document.querySelector('.toolbar');
@@ -1301,8 +1420,11 @@ function renderPending(){
 function names_all_pending(){ (window.__pendingShown||[]).forEach(n => pendingWho.add(n)); safeRenderPending(); }
 
 // ---------- WORKLOAD VIEW (teacher wise, active students only) ----------
-let workloadBy = 'trainer';
-function setWorkloadBy(v){ workloadBy = v; renderWorkload(); }
+let workloadBy = 'trainer', workloadPerson = '', workloadSort = 'active_desc';
+function setWorkloadBy(v){ workloadBy = v; workloadPerson = ''; renderWorkload(); }
+function setWorkloadPerson(v){ workloadPerson = v; renderWorkload(); }
+function setWorkloadSort(v){ workloadSort = v; renderWorkload(); }
+function sortWorkloadBy(col){ workloadSort = (workloadSort === col+'_desc') ? col+'_asc' : col+'_desc'; renderWorkload(); }
 function openWorkload(){
   try{ renderWorkload(); }
   catch(e){ document.getElementById('drillPanel').innerHTML = '<div style="padding:14px;">Could not build the workload view: '+escHtml(e.message)+'<br><br><button class="btn ghost small" onclick="closeDrill()">Close</button></div>'; }
@@ -1335,8 +1457,13 @@ function renderWorkload(){
       } else if(!seen.has(p+'|o')){ r.other.push(s); seen.add(p+'|o'); }
     });
   });
-  const allMonths = [...new Set(Object.values(rows).flatMap(r => Object.keys(r.months)))].sort((a,b)=>monthSortKey(a)-monthSortKey(b));
-  const people = Object.keys(rows).sort((a,b)=>rows[b].active.length-rows[a].active.length || a.localeCompare(b));
+  // Newest month first (Oct, Sep, Aug ...), "Month not set" last
+  const allMonths = [...new Set(Object.values(rows).flatMap(r => Object.keys(r.months)))].sort((a,b)=>{ const na = a==='Month not set', nb = b==='Month not set'; if(na||nb) return na?(nb?0:1):-1; return monthSortKey(b)-monthSortKey(a); });
+  const everyone = Object.keys(rows).sort((a,b)=>a.localeCompare(b));
+  if(workloadPerson && !rows[workloadPerson]) workloadPerson = '';
+  const sortKey = workloadSort.replace(/_(asc|desc)$/,''), sortDir = /_asc$/.test(workloadSort) ? 1 : -1;
+  const sortVal = (p) => { const r = rows[p]; if(sortKey==='name') return p.toLowerCase(); if(sortKey==='math') return r.math; if(sortKey==='english') return r.english; if(sortKey==='other') return r.other.length; if(/^[A-Z]{3} \d{4}$/.test(sortKey)) return (r.months[sortKey]||[]).length; return r.active.length; };
+  const people = everyone.filter(p => !workloadPerson || p===workloadPerson).sort((a,b)=>{ const x = sortVal(a), y = sortVal(b); const c = (typeof x==='string') ? x.localeCompare(y) : (x-y); return (c*sortDir) || a.localeCompare(b); });
   const gid = (list) => registerDrillGroup(list);
   const totalActive = STUDENTS.filter(isActiveStudent).length;
   const html = `
@@ -1346,9 +1473,12 @@ function renderWorkload(){
     <div style="display:flex; gap:6px; margin-bottom:8px;">
       <div class="entry-type-opt ${workloadBy==='trainer'?'active':''}" onclick="setWorkloadBy('trainer')">By trainer</div>
       <div class="entry-type-opt ${workloadBy==='ssm'?'active':''}" onclick="setWorkloadBy('ssm')">By SSM</div></div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <select onchange="setWorkloadPerson(this.value)" style="min-width:200px;"><option value="">All ${workloadBy==='trainer'?'trainers':'SSMs'}</option>${everyone.map(p=>`<option value="${escHtml(p)}" ${p===workloadPerson?'selected':''}>${escHtml(p)} (${rows[p].active.length})</option>`).join('')}</select>
+      <select onchange="setWorkloadSort(this.value)"><option value="active_desc" ${workloadSort==='active_desc'?'selected':''}>Sort: most active students</option><option value="active_asc" ${workloadSort==='active_asc'?'selected':''}>Sort: fewest active students</option><option value="name_asc" ${workloadSort==='name_asc'?'selected':''}>Sort: name A to Z</option><option value="name_desc" ${workloadSort==='name_desc'?'selected':''}>Sort: name Z to A</option>${workloadBy==='trainer'?`<option value="math_desc" ${workloadSort==='math_desc'?'selected':''}>Sort: most Math</option><option value="english_desc" ${workloadSort==='english_desc'?'selected':''}>Sort: most English</option>`:''}</select></div>
     <div class="sub2" style="display:block; margin-bottom:8px; text-transform:none; letter-spacing:normal;">Active means the result is still awaited and the course is not paused, on hold, discontinued, completed or moved out of SGP. Months are the target test month. Click a number to see the students.</div>
     <div style="overflow:auto;"><table class="tbl" style="width:100%; font-size:12.5px; border-collapse:collapse;">
-      <thead><tr><th style="text-align:left;">${workloadBy==='trainer'?'Trainer':'SSM'}</th><th>Active</th>${workloadBy==='trainer'?'<th>Math</th><th>English</th>':''}${allMonths.map(m=>`<th>${m}</th>`).join('')}<th>Paused / dropped / done</th></tr></thead>
+      <thead><tr><th style="text-align:left; cursor:pointer;" onclick="sortWorkloadBy('name')">${workloadBy==='trainer'?'Trainer':'SSM'} &#8645;</th><th style="cursor:pointer;" onclick="sortWorkloadBy('active')">Active &#8645;</th>${workloadBy==='trainer'?'<th style="cursor:pointer;" onclick="sortWorkloadBy(\'math\')">Math &#8645;</th><th style="cursor:pointer;" onclick="sortWorkloadBy(\'english\')">English &#8645;</th>':''}${allMonths.map(m=>`<th style="cursor:pointer;" onclick="sortWorkloadBy('${m}')">${m}</th>`).join('')}<th style="cursor:pointer;" onclick="sortWorkloadBy('other')">Paused / dropped / done &#8645;</th></tr></thead>
       <tbody>${people.map(p => { const r = rows[p]; return `<tr style="border-top:1px solid #eee;">
         <td><b>${escHtml(p)}</b></td>
         <td style="text-align:center; cursor:pointer; font-weight:600;" onclick="showDrill('${escHtml(p).replace(/'/g,"\\'")}: active students', __drillGroups['${gid(r.active)}'])">${r.active.length}</td>
@@ -1990,9 +2120,27 @@ function openLogModal(preStudentId, preStudentName){
 function closeLogModal(){ editCtx = null; editStudentCtx = null; trackerCtx = null; document.getElementById('logOverlay').classList.remove('open'); }
 document.getElementById('logOverlay').addEventListener('click', e => { if(e.target.id==='logOverlay') closeLogModal(); });
 
+// Puts each label with its field into a cell, so the form shows in a grid (two or three columns) instead of one long list.
+function groupFields(box){
+  box.classList.add('grid2');
+  let cur = null;
+  [...box.children].forEach(c => {
+    if(c.tagName==='LABEL' && !c.classList.contains('checkbox-line')){ cur = document.createElement('div'); cur.className='fld'; box.insertBefore(cur, c); cur.appendChild(c); return; }
+    if(c.classList && c.classList.contains('checkbox-line')){
+      if(!cur){ cur = document.createElement('div'); cur.className='fld full'; box.insertBefore(cur, c); }
+      cur.classList.add('full','checks'); cur.appendChild(c); return;
+    }
+    if(c.classList && c.classList.contains('placeholder-box')){ c.classList.add('full'); cur = null; return; }
+    if(c.tagName==='DIV' && c.id && c.querySelector('label')){ c.classList.add('full'); const inner = document.createElement('div'); [...c.children].forEach(k => inner.appendChild(k)); c.appendChild(inner); groupFields(inner); cur = null; return; }
+    if(cur){ if(c.tagName==='TEXTAREA') cur.classList.add('full'); cur.appendChild(c); }
+  });
+}
+function layoutLogFields(){ const b = document.getElementById('logFormFields'); if(b && !b.classList.contains('grid2')) groupFields(b); }
+
 function renderLogModal(){
   const who = getWhoAmI();
   const modal = document.getElementById('logModal');
+  modal.classList.remove('wide');
 
   if(!who){
     const teamList = (RAW && RAW.Team_Directory || []);
@@ -2054,6 +2202,7 @@ function renderLogModal(){
     </div>
     <div class="save-status" id="logSaveStatus"></div>
   `;
+  modal.classList.add('wide'); layoutLogFields();
 
   if(!logPickedStudent){
     document.getElementById('studentSuggest').querySelectorAll('div').forEach(d => {
