@@ -2001,8 +2001,7 @@ function openPanel(s){
 
   document.getElementById('panel').innerHTML = `
     <div class="panel-actions">
-      <div class="icon-btn" onclick="window.print()">&#128438;</div>
-      <div class="icon-btn" onclick="closePanel(); openLogModal('${s.student_id}','${s.name.replace(/'/g,"\\'")}')" title="Log entry for this student">+</div>
+      <button class="btn-log" onclick="closePanel(); openLogModal('${s.student_id}','${s.name.replace(/'/g,"\\'")}')" title="Log entry for this student">+ Log Entry</button>
       <div class="icon-btn" onclick="closePanel()">&times;</div>
     </div>
     <h2>${s.name}</h2>
